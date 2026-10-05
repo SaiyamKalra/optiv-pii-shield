@@ -10,12 +10,10 @@ from models.schemas import ExtractionInput
 from pii.pipeline import PIIPipeline
 
 
-def run_hard_pii_stress_test():
+def test_hard_pii_stress_test():
     pipeline = PIIPipeline()
 
-    # ----------------------------------------------------------------------
-    # PAGE 1: Complex Corporate Directory & Mixed Formatting
-    # ----------------------------------------------------------------------
+    # PAGE 1
     page1 = ExtractionInput(
         file_id="stress_doc_999",
         file_name="Q3_Security_Audit_and_Org_Roster.pptx",
@@ -36,9 +34,7 @@ def run_hard_pii_stress_test():
         """,
     )
 
-    # ----------------------------------------------------------------------
-    # PAGE 2: Acronym Heavy Text & Cross-Page State Validation
-    # ----------------------------------------------------------------------
+    # PAGE 2
     page2 = ExtractionInput(
         file_id="stress_doc_999",
         file_name="Q3_Security_Audit_and_Org_Roster.pptx",
@@ -55,6 +51,7 @@ def run_hard_pii_stress_test():
         """,
     )
 
+    # PAGE 3
     page3 = ExtractionInput(
         file_id="stress_doc_999",
         file_name="Q3_Security_Audit_and_Org_Roster.pptx",
@@ -69,30 +66,22 @@ def run_hard_pii_stress_test():
         """,
     )
 
-    # Execute Pipeline on Chunks
     chunks = [page1, page2, page3]
     results = pipeline.process_document_chunks(chunks)
 
-    # Print Results per Page
-    print("\n" + "=" * 80)
-    print("STRESS TEST RESULTS")
-    print("=" * 80)
+    # Pytest Assertions for CI Validation
+    assert len(results) == 3, "Pipeline should return 3 processed output chunks"
 
+    # Verify that high-risk entities are sanitized across chunks
     for idx, res in enumerate(results, start=1):
-        print(f"\n--- PAGE {idx} SANITIZED TEXT ---")
-        print(res.sanitized_text.strip())
-        print(f"\nPage {idx} Verification Status: {'PASSED ✅' if res.verification_passed else 'FLAGGED ❌'}")
-        print("-" * 80)
+        assert res.verification_passed is True, f"Page {idx} failed verification gate"
+        assert "m.vossberg@cadencefg.example" not in res.sanitized_text, f"Unmasked email found on page {idx}"
+        assert "+1 (555) 0114" not in res.sanitized_text, f"Unmasked phone number found on page {idx}"
 
-    print("\n--- CUMULATIVE TOKEN MAPPING LEDGER ---")
+    # Verify ledger continuity
     final_ledger = results[-1].mapping_ledger
-    for token, val in sorted(final_ledger.items()):
-        print(f"  {token:<25} ==> {val}")
-
-    print("\n--- FINAL VERIFICATION GATE CHECK ---")
-    all_passed = all(r.verification_passed for r in results)
-    print(f"Overall Pipeline Safety Pass: {'PASSED ✅' if all_passed else 'FAILED ❌'}\n")
+    assert len(final_ledger) > 0, "Mapping ledger should not be empty"
 
 
 if __name__ == "__main__":
-    run_hard_pii_stress_test()
+    test_hard_pii_stress_test()
