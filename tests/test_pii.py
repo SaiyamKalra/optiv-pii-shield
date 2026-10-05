@@ -55,9 +55,6 @@ def run_hard_pii_stress_test():
         """,
     )
 
-    # ----------------------------------------------------------------------
-    # PAGE 3: Dirty Edge Cases (Messy Linebreaks, Minimal Context)
-    # ----------------------------------------------------------------------
     page3 = ExtractionInput(
         file_id="stress_doc_999",
         file_name="Q3_Security_Audit_and_Org_Roster.pptx",
