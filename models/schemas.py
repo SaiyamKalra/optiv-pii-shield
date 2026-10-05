@@ -18,6 +18,12 @@ class ExtractionInput(BaseModel):
     source_url: str | None = Field(
         None, description="URL or storage path of the original file"
     )
+    user_id: str | None = Field(
+        None, description="ID or email of the uploading user"
+    )
+    page_number:int = Field(
+        default=1, description="1-based page or slide index"
+    )
     raw_text: str
     bounding_boxes: list[BoundingBox] | None = None
 
@@ -29,12 +35,14 @@ class DetectedEntityDetail(BaseModel):
     start: int
     end: int
     score: float
-
+    page_number: int=1
 
 class PIIOutput(BaseModel):
     file_id: str
     file_name: str
     source_url: str | None = None
+    user_id: str | None = None
+    page_number: int = 1
     status: str
     sanitized_text: str
     mapping_ledger: dict[str, str] = Field(
