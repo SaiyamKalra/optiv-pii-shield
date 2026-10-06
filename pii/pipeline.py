@@ -1,14 +1,18 @@
+# pii/pipeline.py
+
 import logging
 
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from config.settings import (
-    IGNORED_ORGANIZATIONS,
+    IGNORED_WORDS,
     TARGET_ENTITIES,
+    CorpCreditCardRecognizer,
     CorpEmailRecognizer,
     InitialNameRecognizer,
     RobustPhoneRecognizer,
+    StrictSsnRecognizer,
 )
 from models.schemas import DetectedEntityDetail, ExtractionInput, PIIOutput
 from pii.token_manager import TokenManager
@@ -21,10 +25,9 @@ logger = logging.getLogger("PIIPipeline")
 class PIIPipeline:
 
     def __init__(self):
-        # 1. Configure Presidio with en_core_web_sm & ignore non-PII spaCy labels
         configuration = {
             "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+            "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
             "ner_model_configuration": {
                 "labels_to_ignore": [
                     "CARDINAL",
@@ -33,20 +36,26 @@ class PIIPipeline:
                     "WORK_OF_ART",
                     "PERCENT",
                     "MONEY",
+                    "FAC",
                 ]
             },
         }
         provider = NlpEngineProvider(nlp_configuration=configuration)
         nlp_engine = provider.create_engine()
 
-        # 2. Register custom recognizers
         registry = RecognizerRegistry()
         registry.load_predefined_recognizers()
+
+        # CRITICAL: Remove Presidio's built-in default phone recognizer to stop IP/CC slicing
+        registry.remove_recognizer("PhoneRecognizer")
+
+        # Add our clean, bounded recognizers
         registry.add_recognizer(InitialNameRecognizer)
         registry.add_recognizer(CorpEmailRecognizer)
         registry.add_recognizer(RobustPhoneRecognizer)
+        registry.add_recognizer(StrictSsnRecognizer)
+        registry.add_recognizer(CorpCreditCardRecognizer)
 
-        # 3. Create single shared AnalyzerEngine
         self.analyzer = AnalyzerEngine(
             nlp_engine=nlp_engine, registry=registry
         )
@@ -82,23 +91,41 @@ class PIIPipeline:
             else TokenManager()
         )
 
+        # 1. Analyze text with Presidio
         results = self.analyzer.analyze(
             text=raw_text, entities=TARGET_ENTITIES, language="en"
         )
-        results = self._remove_overlapping_spans(results)
+
+        # 2. Filter predictions: drop low confidence (< 0.60) & blacklisted words
+        filtered_results = []
+        for res in results:
+            val = raw_text[res.start : res.end].strip()
+
+            if res.score < 0.60:
+                continue
+
+            # Drop false-positive headers/acronyms
+            if val.upper() in IGNORED_WORDS or any(
+                w in val.upper()
+                for w in [
+                    "RACI MATRIX",
+                    "COMPLIANCE SIGN-OFF",
+                    "INFRASTRUCTURE NODES",
+                    "ROSTER APPENDIX",
+                    "SLA & KPI",
+                ]
+            ):
+                continue
+
+            filtered_results.append(res)
+
+        # 3. Deduplicate overlapping spans
+        results = self._remove_overlapping_spans(filtered_results)
 
         detected_details = []
-
         for res in results:
             original_val = raw_text[res.start : res.end].strip()
             entity_type = res.entity_type
-
-            # Skip false-positive acronyms (e.g., RACI, SWOT) tagged as ORGANIZATION
-            if (
-                entity_type == "ORGANIZATION"
-                and original_val.upper() in IGNORED_ORGANIZATIONS
-            ):
-                continue
 
             token = token_mgr.get_or_create_token(original_val, entity_type)
 
@@ -114,6 +141,7 @@ class PIIPipeline:
                 )
             )
 
+        # 4. Replace tokens right-to-left
         sanitized_text = raw_text
         for detail in sorted(
             detected_details, key=lambda x: x.start, reverse=True
@@ -143,26 +171,41 @@ class PIIPipeline:
     def process_document_chunks(
         self, chunks: list[ExtractionInput]
     ) -> list[PIIOutput]:
-        """Processes multi-page chunks reusing a single TokenManager and shared Presidio engine."""
         shared_token_manager = TokenManager()
         outputs = []
-
         for chunk in chunks:
             out = self.process_chunk(
                 chunk, shared_token_manager=shared_token_manager
             )
             outputs.append(out)
-
         return outputs
 
     def _remove_overlapping_spans(self, results):
-        sorted_res = sorted(results, key=lambda x: (x.start, -x.score))
+        priority_map = {
+            "CREDIT_CARD": 1,
+            "US_SSN": 1,
+            "IP_ADDRESS": 1,
+            "EMAIL_ADDRESS": 1,
+            "PHONE_NUMBER": 2,
+            "PERSON": 3,
+            "ORGANIZATION": 4,
+            "LOCATION": 4,
+        }
+
+        sorted_res = sorted(
+            results,
+            key=lambda x: (
+                priority_map.get(x.entity_type, 99),
+                -x.score,
+                -(x.end - x.start),
+            ),
+        )
+
         filtered = []
-        last_end = -1
-
         for res in sorted_res:
-            if res.start >= last_end:
+            if not any(
+                res.start < keep.end and res.end > keep.start for keep in filtered
+            ):
                 filtered.append(res)
-                last_end = res.end
 
-        return filtered
+        return sorted(filtered, key=lambda x: x.start)
