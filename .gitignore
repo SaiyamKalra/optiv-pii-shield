@@ -9,3 +9,7 @@ __pycache__/
 
 storage/original/*
 storage/sanitized/*
+
+CLAUDE.md
+.agents/*
+skills-lock.json

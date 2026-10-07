@@ -209,3 +209,71 @@ class PIIPipeline:
                 filtered.append(res)
 
         return sorted(filtered, key=lambda x: x.start)
+
+
+def main():
+    """Run the pipeline on ExtractionInput JSON saved by an extractor (--save-chunks)."""
+    import argparse
+    import json
+    from collections import Counter
+    from pathlib import Path
+
+    from pydantic import TypeAdapter
+
+    parser = argparse.ArgumentParser(description="Run PII detection on extracted page chunks.")
+    parser.add_argument("chunks", help="ExtractionInput JSON file from an extractor's --save-chunks")
+    parser.add_argument("--pages", help="Comma-separated page numbers to show, e.g. 7,22")
+    parser.add_argument(
+        "--show-sanitized", action="store_true",
+        help="Print each page's sanitized (tokenized) text",
+    )
+    parser.add_argument(
+        "--json", metavar="FILE",
+        help="Save the raw PIIOutput objects as JSON (includes original values, i.e. PII)",
+    )
+    args = parser.parse_args()
+
+    # Presidio logs a warning for every unmapped spaCy label; keep the summary readable.
+    for name in ("presidio-analyzer", "PIIPipeline"):
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+    raw = json.loads(Path(args.chunks).read_text(encoding="utf-8"))
+    chunks = TypeAdapter(list[ExtractionInput]).validate_python(raw)
+    selected = {int(p) for p in args.pages.split(",")} if args.pages else None
+
+    # Always process every page so tokens stay consistent across the document.
+    results = PIIPipeline().process_document_chunks(chunks)
+
+    print(f"{chunks[0].file_name if chunks else args.chunks}: {len(results)} pages")
+    print(f"{'page':>4}  {'status':<18} {'findings':>8}  types")
+    totals = Counter()
+    for r in results:
+        types = Counter(e.entity_type for e in r.detected_entities)
+        totals.update(types)
+        if selected and r.page_number not in selected:
+            continue
+        summary = ", ".join(f"{t} {n}" for t, n in types.most_common())
+        print(f"{r.page_number:>4}  {r.status:<18} {len(r.detected_entities):>8}  {summary}")
+        if args.show_sanitized:
+            print(r.sanitized_text)
+            print("-" * 80)
+
+    flagged = [r.page_number for r in results if not r.verification_passed]
+    print(f"\nTotal findings: {sum(totals.values())} "
+          f"({', '.join(f'{t} {n}' for t, n in totals.most_common())})")
+    print(f"Unique tokens: {len(results[-1].mapping_ledger) if results else 0}")
+    print(f"Pages flagged by verifier: {flagged or 'none'}")
+
+    if args.json:
+        out = [
+            r.model_dump(mode="json") for r in results
+            if not selected or r.page_number in selected
+        ]
+        Path(args.json).write_text(
+            json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"Saved raw PIIOutput for {len(out)} page(s) to {Path(args.json).resolve()}")
+
+
+if __name__ == "__main__":
+    main()
