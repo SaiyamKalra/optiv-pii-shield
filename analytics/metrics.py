@@ -1,5 +1,7 @@
 import pandas as pd
+
 from database.db import engine
+
 
 def fetch_executive_kpis() -> dict:
     df_summary = pd.read_sql("SELECT * FROM document_summary", con=engine)

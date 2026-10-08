@@ -1,5 +1,6 @@
-from database.db import DocumentSummary,PIIDetectionLog, SessionLocal
+from database.db import DocumentSummary, PIIDetectionLog, SessionLocal
 from models.schemas import PIIOutput
+
 
 def save_pipeline_output(pii_output:PIIOutput):
     db=SessionLocal();

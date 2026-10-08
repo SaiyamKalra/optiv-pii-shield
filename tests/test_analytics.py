@@ -1,10 +1,9 @@
 import pytest
-import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from analytics import metrics
 from database.db import Base, DocumentSummary, PIIDetectionLog
-import analytics.metrics as metrics
 
 
 @pytest.fixture
