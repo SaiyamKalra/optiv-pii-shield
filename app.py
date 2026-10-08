@@ -419,7 +419,7 @@ elif st.session_state.screen == "analytics" and st.session_state.res:
                 "font": {"color": "#00f2fe", "size": 16, "family": "Calibri, Segoe UI, sans-serif"},
             },
             font={"color": "#e2e8f0", "family": "Calibri, Segoe UI, sans-serif"},
-            margin=dict(l=20, r=20, t=50, b=20),
+            margin={"l": 20, "r": 20, "t": 50, "b": 20},
         )
         return fig
 
