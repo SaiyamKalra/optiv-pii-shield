@@ -14,6 +14,8 @@ from config.settings import (
     RobustPhoneRecognizer,
     StrictSsnRecognizer,
 )
+from database.db import init_db
+from database.repository import save_pipeline_output
 from models.schemas import DetectedEntityDetail, ExtractionInput, PIIOutput
 from pii.token_manager import TokenManager
 from pii.verifier import VerificationGate
@@ -25,6 +27,11 @@ logger = logging.getLogger("PIIPipeline")
 class PIIPipeline:
 
     def __init__(self):
+        try:
+            init_db()
+        except Exception as e:
+            logger.warning(f"Failed to initialize database: {e}")
+
         configuration = {
             "nlp_engine_name": "spacy",
             "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
@@ -46,10 +53,8 @@ class PIIPipeline:
         registry = RecognizerRegistry()
         registry.load_predefined_recognizers()
 
-        # CRITICAL: Remove Presidio's built-in default phone recognizer to stop IP/CC slicing
         registry.remove_recognizer("PhoneRecognizer")
 
-        # Add our clean, bounded recognizers
         registry.add_recognizer(InitialNameRecognizer)
         registry.add_recognizer(CorpEmailRecognizer)
         registry.add_recognizer(RobustPhoneRecognizer)
@@ -71,7 +76,7 @@ class PIIPipeline:
         page_num = payload.page_number
 
         if not raw_text or not raw_text.strip():
-            return PIIOutput(
+            result = PIIOutput(
                 file_id=file_id,
                 file_name=payload.file_name,
                 source_url=payload.source_url,
@@ -85,18 +90,22 @@ class PIIPipeline:
                 detection_counts={},
             )
 
+            try:
+                save_pipeline_output(result)
+            except Exception as e:
+                logger.warning(f"Failed to persist output to DB: {e}")
+            return result
+
         token_mgr = (
             shared_token_manager
             if shared_token_manager is not None
             else TokenManager()
         )
 
-        # 1. Analyze text with Presidio
         results = self.analyzer.analyze(
             text=raw_text, entities=TARGET_ENTITIES, language="en"
         )
 
-        # 2. Filter predictions: drop low confidence (< 0.60) & blacklisted words
         filtered_results = []
         for res in results:
             val = raw_text[res.start : res.end].strip()
@@ -104,7 +113,6 @@ class PIIPipeline:
             if res.score < 0.60:
                 continue
 
-            # Drop false-positive headers/acronyms
             if val.upper() in IGNORED_WORDS or any(
                 w in val.upper()
                 for w in [
@@ -125,7 +133,7 @@ class PIIPipeline:
         detected_details = []
         for res in results:
             original_val = raw_text[res.start : res.end].strip()
-            entity_type = res.entity_type
+            entity_type = res.entity_type  # <--- RESTORED THIS LINE
 
             token = token_mgr.get_or_create_token(original_val, entity_type)
 
@@ -141,7 +149,6 @@ class PIIPipeline:
                 )
             )
 
-        # 4. Replace tokens right-to-left
         sanitized_text = raw_text
         for detail in sorted(
             detected_details, key=lambda x: x.start, reverse=True
@@ -154,7 +161,7 @@ class PIIPipeline:
 
         verification_passed = self.verifier.verify(sanitized_text)
 
-        return PIIOutput(
+        result = PIIOutput(
             file_id=file_id,
             file_name=payload.file_name,
             source_url=payload.source_url,
@@ -167,6 +174,13 @@ class PIIPipeline:
             verification_passed=verification_passed,
             detection_counts=token_mgr.entity_counters,
         )
+
+        try:
+            save_pipeline_output(result)
+        except Exception as e:
+            logger.warning(f"Failed to persist output to DB: {e}")
+
+        return result
 
     def process_document_chunks(
         self, chunks: list[ExtractionInput]
@@ -220,20 +234,28 @@ def main():
 
     from pydantic import TypeAdapter
 
-    parser = argparse.ArgumentParser(description="Run PII detection on extracted page chunks.")
-    parser.add_argument("chunks", help="ExtractionInput JSON file from an extractor's --save-chunks")
-    parser.add_argument("--pages", help="Comma-separated page numbers to show, e.g. 7,22")
+    parser = argparse.ArgumentParser(
+        description="Run PII detection on extracted page chunks."
+    )
     parser.add_argument(
-        "--show-sanitized", action="store_true",
+        "chunks",
+        help="ExtractionInput JSON file from an extractor's --save-chunks",
+    )
+    parser.add_argument(
+        "--pages", help="Comma-separated page numbers to show, e.g. 7,22"
+    )
+    parser.add_argument(
+        "--show-sanitized",
+        action="store_true",
         help="Print each page's sanitized (tokenized) text",
     )
     parser.add_argument(
-        "--json", metavar="FILE",
+        "--json",
+        metavar="FILE",
         help="Save the raw PIIOutput objects as JSON (includes original values, i.e. PII)",
     )
     args = parser.parse_args()
 
-    # Presidio logs a warning for every unmapped spaCy label; keep the summary readable.
     for name in ("presidio-analyzer", "PIIPipeline"):
         logging.getLogger(name).setLevel(logging.ERROR)
 
@@ -253,26 +275,33 @@ def main():
         if selected and r.page_number not in selected:
             continue
         summary = ", ".join(f"{t} {n}" for t, n in types.most_common())
-        print(f"{r.page_number:>4}  {r.status:<18} {len(r.detected_entities):>8}  {summary}")
+        print(
+            f"{r.page_number:>4}  {r.status:<18} {len(r.detected_entities):>8}  {summary}"
+        )
         if args.show_sanitized:
             print(r.sanitized_text)
             print("-" * 80)
 
     flagged = [r.page_number for r in results if not r.verification_passed]
-    print(f"\nTotal findings: {sum(totals.values())} "
-          f"({', '.join(f'{t} {n}' for t, n in totals.most_common())})")
+    print(
+        f"\nTotal findings: {sum(totals.values())} "
+        f"({', '.join(f'{t} {n}' for t, n in totals.most_common())})"
+    )
     print(f"Unique tokens: {len(results[-1].mapping_ledger) if results else 0}")
     print(f"Pages flagged by verifier: {flagged or 'none'}")
 
     if args.json:
         out = [
-            r.model_dump(mode="json") for r in results
+            r.model_dump(mode="json")
+            for r in results
             if not selected or r.page_number in selected
         ]
         Path(args.json).write_text(
             json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        print(f"Saved raw PIIOutput for {len(out)} page(s) to {Path(args.json).resolve()}")
+        print(
+            f"Saved raw PIIOutput for {len(out)} page(s) to {Path(args.json).resolve()}"
+        )
 
 
 if __name__ == "__main__":
