@@ -26,8 +26,8 @@ def save_pipeline_output(pii_output:PIIOutput):
             db.add(entity_record)
         db.commit()
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise e
+        raise
     finally:
         db.close()

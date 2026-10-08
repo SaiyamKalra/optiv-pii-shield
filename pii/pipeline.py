@@ -1,9 +1,8 @@
-# pii/pipeline.py
-
 import logging
 
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from presidio_analyzer.nlp_engine import NlpEngineProvider
+from sqlalchemy.exc import SQLAlchemyError
 
 from config.settings import (
     IGNORED_WORDS,
@@ -29,7 +28,7 @@ class PIIPipeline:
     def __init__(self):
         try:
             init_db()
-        except Exception as e:
+        except SQLAlchemyError as e:
             logger.warning(f"Failed to initialize database: {e}")
 
         configuration = {
@@ -92,7 +91,7 @@ class PIIPipeline:
 
             try:
                 save_pipeline_output(result)
-            except Exception as e:
+            except SQLAlchemyError as e:
                 logger.warning(f"Failed to persist output to DB: {e}")
             return result
 
@@ -133,7 +132,7 @@ class PIIPipeline:
         detected_details = []
         for res in results:
             original_val = raw_text[res.start : res.end].strip()
-            entity_type = res.entity_type  # <--- RESTORED THIS LINE
+            entity_type = res.entity_type
 
             token = token_mgr.get_or_create_token(original_val, entity_type)
 
@@ -177,7 +176,7 @@ class PIIPipeline:
 
         try:
             save_pipeline_output(result)
-        except Exception as e:
+        except SQLAlchemyError as e:
             logger.warning(f"Failed to persist output to DB: {e}")
 
         return result
@@ -263,7 +262,6 @@ def main():
     chunks = TypeAdapter(list[ExtractionInput]).validate_python(raw)
     selected = {int(p) for p in args.pages.split(",")} if args.pages else None
 
-    # Always process every page so tokens stay consistent across the document.
     results = PIIPipeline().process_document_chunks(chunks)
 
     print(f"{chunks[0].file_name if chunks else args.chunks}: {len(results)} pages")
