@@ -2,8 +2,6 @@ import pymupdf
 
 from extraction.pdf_extractor import extract_pdf
 from models.schemas import (
-    BoundingBox,
-    ExtractionInput,
     DetectedEntityDetail,
     PIIOutput,
 )

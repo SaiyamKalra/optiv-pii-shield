@@ -1,10 +1,12 @@
 from pathlib import Path
+
 import pymupdf
+
+from extraction.pdf_extractor import extract_pdf
 from models.schemas import ExtractionInput, PIIOutput
+from pii.pipeline import PIIPipeline
 from redaction.pdf_redactor import PDFRedactor
 from redaction.verifier import RedactionVerifier
-from extraction.pdf_extractor import extract_pdf
-from pii.pipeline import PIIPipeline
 
 
 class RedactionPipeline:
@@ -228,7 +230,7 @@ class RedactionPipeline:
                 expected_pages=actual_page_count,
             )
 
-        except Exception as exc:
+        except (OSError, ValueError, RuntimeError, TypeError) as exc:
             self._remove_output(output_path)
             return {
                 "status": "BLOCKED",

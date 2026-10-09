@@ -1,7 +1,8 @@
 import pymupdf
 from PIL import Image, ImageDraw, ImageFont
-from pii.pipeline import PIIPipeline
+
 from extraction.pdf_extractor import extract_pdf
+from pii.pipeline import PIIPipeline
 from redaction.pdf_redactor import PDFRedactor
 from redaction.verifier import RedactionVerifier
 
@@ -36,7 +37,6 @@ def test_scanned_pdf_redacts_email_from_image(tmp_path):
     start = chunk.raw_text.find(email)
 
     assert start >= 0, f"OCR did not recover the email. Text: {chunk.raw_text!r}"
-    end = start + len(email)
 
     assert any(
         box.source == "ocr" and box.char_start is not None and box.char_end is not None

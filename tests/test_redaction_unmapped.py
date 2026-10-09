@@ -38,16 +38,6 @@ def test_pipeline_blocks_when_pii_has_no_bounding_box(tmp_path):
         verification_passed=False,
     )
 
-    clean_rescan = PIIOutput(
-        file_id=chunk.file_id,
-        file_name="sanitized.pdf",
-        page_number=1,
-        status="SUCCESS",
-        sanitized_text="Confidential employee record",
-        detected_entities=[],
-        verification_passed=True,
-    )
-
     result = RedactionPipeline().process(
         input_pdf=str(input_pdf),
         output_pdf=str(output_pdf),

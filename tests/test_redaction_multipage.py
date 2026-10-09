@@ -1,7 +1,6 @@
 import pymupdf
 
 from extraction.pdf_extractor import extract_pdf
-from models.schemas import DetectedEntityDetail, PIIOutput
 from pii.pipeline import PIIPipeline
 from redaction.pdf_redactor import PDFRedactor
 from redaction.verifier import RedactionVerifier

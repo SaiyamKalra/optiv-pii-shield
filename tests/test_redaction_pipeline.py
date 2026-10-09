@@ -2,8 +2,8 @@ import pymupdf
 
 from models.schemas import (
     BoundingBox,
-    ExtractionInput,
     DetectedEntityDetail,
+    ExtractionInput,
     PIIOutput,
 )
 from redaction.pipeline import RedactionPipeline
@@ -135,7 +135,7 @@ def test_pipeline_passes_when_rescan_finds_no_pii(tmp_path):
 
 
 def test_pipeline_blocks_when_rescan_finds_pii(tmp_path):
-    input_pdf, chunk, original, clean = create_test_data(tmp_path)
+    input_pdf, chunk, original, _clean = create_test_data(tmp_path)
     output_pdf = tmp_path / "sanitized.pdf"
 
     def fake_extractor(path):

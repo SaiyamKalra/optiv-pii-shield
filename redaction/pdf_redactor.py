@@ -1,4 +1,5 @@
 import pymupdf
+
 from models.schemas import ExtractionInput, PIIOutput
 
 
