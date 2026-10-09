@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -21,7 +21,7 @@ class DocumentSummary(Base):
     status = Column(String)
     verification_passed = Column(Boolean)
     total_entities_detected = Column(Integer)
-    processed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    processed_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 
 class PIIDetectionLog(Base):
@@ -33,7 +33,7 @@ class PIIDetectionLog(Base):
     entity_type = Column(String, index=True)
     confidence_score = Column(Float)
     page_number = Column(Integer)
-    processed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    processed_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 
 def init_db():
