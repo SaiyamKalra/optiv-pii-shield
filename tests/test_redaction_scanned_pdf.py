@@ -13,11 +13,17 @@ def test_scanned_pdf_redacts_email_from_image(tmp_path):
 
     image = Image.new("RGB", (1200, 300), "white")
     draw = ImageDraw.Draw(image)
+
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 42)
+    except OSError:
+        font = ImageFont.load_default(size=42)
+
     draw.text(
         (50, 100),
         "Contact: alexander.quinn@example.com",
         fill="black",
-        font=ImageFont.truetype("arial.ttf", 42),
+        font=font,
     )
 
     image_path = tmp_path / "scanned_page.png"
