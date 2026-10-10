@@ -1,78 +1,35 @@
 # extraction/pdf_extractor.py
 
 import argparse
-import hashlib
-import json
 import logging
+import re
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import pymupdf
 from PIL import Image, ImageDraw
 
-from models.schemas import BoundingBox, ExtractionInput
-from ocr.ocr_engine import LOW_CONF_THRESHOLD, OcrEngine, OcrWord
+from extraction.normalizer import (
+    MIN_IMAGE_SIDE_PT,
+    PageTextBuilder,
+    decorative_hashes,
+    file_id_for,
+    image_hash,
+    save_chunks,
+)
+from extraction.validation import DocumentValidationError, validate_document
+from models.schemas import ExtractionInput
+from ocr.ocr_engine import LOW_CONF_THRESHOLD, OCR_WORKERS, OcrEngine, OcrWord
 
 logger = logging.getLogger("PdfExtractor")
 
-# Images smaller than this on either side (PDF points) are logos/icons and are not OCR'd.
-MIN_IMAGE_SIDE_PT = 40.0
+__all__ = ["extract_pdf", "render_overlays", "save_chunks"]
+
 # An OCR word overlapping a native word by more than this fraction is a duplicate.
 DUPLICATE_OVERLAP = 0.5
-
-
-class _PageTextBuilder:
-    """Builds raw_text and word boxes together so char offsets always line up."""
-
-    def __init__(self, page_number: int):
-        self.page_number = page_number
-        self.parts: list[str] = []
-        self.length = 0
-        self.boxes: list[BoundingBox] = []
-        self.line_open = False
-
-    def _append(self, s: str):
-        self.parts.append(s)
-        self.length += len(s)
-
-    def add_word(self, text, rect: pymupdf.Rect, source="native", confidence=None):
-        if self.line_open:
-            self._append(" ")
-        start = self.length
-        self._append(text)
-        self.line_open = True
-        self.boxes.append(
-            BoundingBox(
-                page=self.page_number,
-                text=text,
-                x=rect.x0,
-                y=rect.y0,
-                w=rect.width,
-                h=rect.height,
-                char_start=start,
-                char_end=self.length,
-                source=source,
-                confidence=confidence,
-            )
-        )
-
-    def end_line(self):
-        if self.line_open:
-            self._append("\n")
-            self.line_open = False
-
-    def end_block(self):
-        self.end_line()
-        if self.parts and not "".join(self.parts[-2:]).endswith("\n\n"):
-            self._append("\n")
-
-    @property
-    def text(self) -> str:
-        return "".join(self.parts).rstrip("\n")
-
-
-def _file_id_for(path: Path) -> str:
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return f"doc_{digest[:12]}"
+_METADATA_FIELDS = ("author", "title", "subject", "keywords", "creator", "producer")
 
 
 def _overlap_fraction(a: pymupdf.Rect, b: pymupdf.Rect) -> float:
@@ -82,35 +39,60 @@ def _overlap_fraction(a: pymupdf.Rect, b: pymupdf.Rect) -> float:
     return inter.get_area() / a.get_area()
 
 
+class _ImagePlacement:
+    """Maps between OCR pixels of a rendered image region and unrotated page points.
+
+    PyMuPDF reports text, image positions and redaction rectangles in unrotated page
+    coordinates, but renders (clip) in rotated, as-displayed coordinates. The image is
+    rendered as displayed (upright for OCR) and boxes are mapped back.
+    """
+
+    def __init__(self, page: pymupdf.Page, rect: pymupdf.Rect, img_size: tuple[int, int]):
+        self.derotate = page.derotation_matrix
+        self.clip = rect * page.rotation_matrix
+        self.sx = self.clip.width / img_size[0]
+        self.sy = self.clip.height / img_size[1]
+
+    def to_page(self, x0: float, y0: float, x1: float, y1: float) -> pymupdf.Rect:
+        shown = pymupdf.Rect(
+            self.clip.x0 + x0 * self.sx, self.clip.y0 + y0 * self.sy,
+            self.clip.x0 + x1 * self.sx, self.clip.y0 + y1 * self.sy,
+        )
+        return (shown * self.derotate).normalize()
+
+    def word_rect(self, word: OcrWord) -> pymupdf.Rect:
+        return self.to_page(word.left, word.top, word.left + word.width, word.top + word.height)
+
+    def box_xywh(self, box) -> tuple[float, float, float, float]:
+        r = self.to_page(*box)
+        return r.x0, r.y0, r.width, r.height
+
+
+def _rect_for(rects: dict[int, pymupdf.Rect], word: OcrWord) -> tuple[float, float, float, float]:
+    r = rects[id(word)]
+    return r.x0, r.y0, r.width, r.height
+
+
 def _render_region(page: pymupdf.Page, rect: pymupdf.Rect, dpi: int) -> Image.Image:
-    pix = page.get_pixmap(clip=rect, dpi=dpi, alpha=False)
+    pix = page.get_pixmap(clip=rect * page.rotation_matrix, dpi=dpi, alpha=False)
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
-def _ocr_words_to_page(
-    words: list[OcrWord], region: pymupdf.Rect, img: Image.Image
-) -> list[tuple[OcrWord, pymupdf.Rect]]:
-    sx = region.width / img.width
-    sy = region.height / img.height
-    placed = []
-    for w in words:
-        x0 = region.x0 + w.left * sx
-        y0 = region.y0 + w.top * sy
-        placed.append((w, pymupdf.Rect(x0, y0, x0 + w.width * sx, y0 + w.height * sy)))
-    return placed
+def _image_digest(doc: pymupdf.Document, xref: int) -> str | None:
+    if xref <= 0:
+        return None  # inline image: no stable object to hash
+    try:
+        return image_hash(doc.extract_image(xref)["image"])
+    except (RuntimeError, ValueError, KeyError, TypeError):
+        return None
 
 
-def _extract_page(
-    page: pymupdf.Page, page_number: int, ocr_engine: OcrEngine | None, dpi: int
-) -> dict:
-    builder = _PageTextBuilder(page_number)
-
-    # 1. Native text layer, grouped into lines in PyMuPDF's reading order.
-    native_words = page.get_text("words")
+def _add_native_text(page: pymupdf.Page, builder: PageTextBuilder) -> list:
+    """Native text layer, grouped into lines in PyMuPDF's reading order."""
     native_rects = []
     current_line = None
     current_block = None
-    for x0, y0, x1, y1, text, block_no, line_no, _ in native_words:
+    for x0, y0, x1, y1, text, block_no, line_no, _ in page.get_text("words"):
         if current_block is not None and block_no != current_block:
             builder.end_block()
         elif (block_no, line_no) != current_line:
@@ -118,89 +100,154 @@ def _extract_page(
         current_block, current_line = block_no, (block_no, line_no)
         rect = pymupdf.Rect(x0, y0, x1, y1)
         native_rects.append((text.lower(), rect))
-        builder.add_word(text, rect)
+        builder.add_word(text, rect.x0, rect.y0, rect.width, rect.height)
     builder.end_block()
+    return native_rects
 
-    # 2. Every embedded image placement on the page, top-to-bottom, left-to-right.
+
+class _ImageJob:
+    """One image region waiting for OCR."""
+
+    def __init__(self, rect, xref, placement, future):
+        self.rect, self.xref, self.placement, self.future = rect, xref, placement, future
+
+
+def _queue_images(page, builder, ocr_engine, dpi, pool) -> list[_ImageJob]:
+    """Render every embedded image placement (top-to-bottom, left-to-right) and queue its OCR.
+
+    Small and decorative images are counted here and not queued.
+    """
+    page_area = page.rect * page.derotation_matrix
     placements = []
     for info in page.get_image_info(xrefs=True):
-        rect = pymupdf.Rect(info["bbox"]) & page.rect
-        if rect.is_empty:
-            continue
-        placements.append(rect)
-    placements.sort(key=lambda r: (round(r.y0, 1), r.x0))
+        rect = pymupdf.Rect(info["bbox"]) & page_area
+        if not rect.is_empty:
+            placements.append((rect, info.get("xref", 0)))
+    placements.sort(key=lambda p: (round(p[0].y0, 1), p[0].x0))
 
-    images_ocr = 0
-    images_skipped = 0
-    ocr_confidences: list[float] = []
     ocr_available = ocr_engine is not None and ocr_engine.is_available()
-
-    for rect in placements:
+    decorative = decorative_hashes()
+    jobs = []
+    for rect, xref in placements:
         if rect.width < MIN_IMAGE_SIDE_PT or rect.height < MIN_IMAGE_SIDE_PT:
-            images_skipped += 1
-            logger.info(
-                "Page %d: skipped small image %.0fx%.0f pt",
-                page_number, rect.width, rect.height,
-            )
+            builder.images_skipped += 1
+            logger.info("Page %d: skipped small image %.0fx%.0f pt",
+                        builder.page_number, rect.width, rect.height)
+            continue
+        if decorative and _image_digest(page.parent, xref) in decorative:
+            builder.images_decorative += 1
             continue
         if not ocr_available:
-            images_skipped += 1
+            builder.images_skipped += 1
             continue
 
         img = _render_region(page, rect, dpi)
-        placed = _ocr_words_to_page(ocr_engine.ocr_image(img), rect, img)
-        images_ocr += 1
+        placement = _ImagePlacement(page, rect, img.size)
+        future = pool.submit(ocr_engine.ocr_image_detailed, img, px_per_inch=dpi)
+        jobs.append(_ImageJob(rect, xref, placement, future))
 
-        # 3. Drop OCR words that duplicate native text already captured.
-        kept = [
-            (w, r) for w, r in placed
-            if not any(
-                text == w.text.lower() and _overlap_fraction(r, nr) > DUPLICATE_OVERLAP
-                for text, nr in native_rects
-            )
-        ]
+    if placements and not ocr_available and builder.images_skipped:
+        logger.warning("Page %d: Tesseract unavailable, %d image(s) not OCR'd",
+                       builder.page_number, builder.images_skipped)
+    return jobs
 
-        # 4. Append in Tesseract block/paragraph/line order.
-        current_block = None
-        current_line = None
-        for w, r in kept:
-            if current_block is not None and w.block != current_block:
-                builder.end_block()
-            elif (w.block, w.par, w.line) != current_line:
-                builder.end_line()
-            current_block, current_line = w.block, (w.block, w.par, w.line)
-            builder.add_word(w.text, r, source="ocr", confidence=w.conf)
-            ocr_confidences.append(w.conf)
-        builder.end_block()
 
-    if placements and not ocr_available and images_skipped:
-        logger.warning(
-            "Page %d: Tesseract unavailable, %d image(s) not OCR'd",
-            page_number, images_skipped,
-        )
+def _apply_ocr(builder: PageTextBuilder, job: _ImageJob, native_rects):
+    """Add one image's OCR result to its page, in queue (reading) order."""
+    rect = job.rect
+    try:
+        result = job.future.result()
+    except RuntimeError as exc:  # Tesseract timeout or failure
+        builder.images_skipped += 1
+        builder.errors.append(f"OCR failed for image xref {job.xref}: {exc}")
+        builder.add_unread(rect.x0, rect.y0, rect.width, rect.height, reason="image_error")
+        return
+    builder.images_ocr += 1
 
-    has_native = bool(native_words)
-    has_ocr = bool(ocr_confidences)
-    if has_ocr and has_native:
-        method = "hybrid"
-    elif has_ocr or (images_ocr and not has_native):
-        method = "ocr"
-    else:
-        method = "native"
+    # Drop OCR words that duplicate native text already captured.
+    kept = []
+    for word in result.words:
+        r = job.placement.word_rect(word)
+        if not any(
+            text == word.text.lower() and _overlap_fraction(r, nr) > DUPLICATE_OVERLAP
+            for text, nr in native_rects
+        ):
+            kept.append((word, r))
+    builder.add_ocr_words(
+        [w for w, _ in kept], partial(_rect_for, {id(w): r for w, r in kept})
+    )
+    for region in result.unread_regions:
+        builder.add_unread(*job.placement.box_xywh(region))
 
+
+def _add_page_hidden_content(page: pymupdf.Page, builder: PageTextBuilder):
+    """Comments/annotations, form-field values and link targets: stored, not drawn as text."""
+    for annot in page.annots() or []:
+        if annot.type[1] == "Popup":
+            continue
+        info = annot.info
+        text = " ".join(v for v in (info.get("title"), info.get("subject"), info.get("content")) if v)
+        builder.add_hidden("annotation", text, f"{annot.type[1]} annotation")
+    for widget in page.widgets() or []:
+        value = widget.field_value
+        if isinstance(value, str) and value not in ("", "Off"):
+            builder.add_hidden("form_field", value, widget.field_name)
+    for link in page.get_links():
+        if link.get("uri"):
+            builder.add_hidden("link", link["uri"])
+
+
+def _document_hidden_content(doc: pymupdf.Document) -> tuple[list, dict[int, list[str]]]:
+    """Document-level items (for page 1) and bookmark titles keyed by target page."""
+    items = []
+    meta = doc.metadata or {}
+    values = set()
+    for field in _METADATA_FIELDS:
+        value = (meta.get(field) or "").strip()
+        if value:
+            items.append(("metadata", value, field))
+            values.add(value)
+    xmp = doc.get_xml_metadata() or ""
+    xmp_text = [t.strip() for t in re.findall(r">([^<>]+)<", xmp) if t.strip()]
+    extra = [t for t in dict.fromkeys(xmp_text) if t not in values]
+    if extra:
+        items.append(("xmp_metadata", " ".join(extra), "xmp"))
+    for name in doc.embfile_names():
+        info = doc.embfile_info(name)
+        text = " ".join(v for v in (info.get("filename"), info.get("desc")) if v)
+        items.append(("embedded_file", text or name, name))
+
+    bookmarks: dict[int, list[str]] = {}
+    for _, title, target in doc.get_toc(simple=True):
+        bookmarks.setdefault(max(target, 1), []).append(title)
+    return items, bookmarks
+
+
+class _PendingPage:
+    def __init__(self, builder, native_rects, jobs):
+        self.builder, self.native_rects, self.jobs = builder, native_rects, jobs
+
+    def finish(self) -> PageTextBuilder:
+        for job in self.jobs:
+            _apply_ocr(self.builder, job, self.native_rects)
+        return self.builder
+
+
+def _start_page(page, page_number, ocr_engine, dpi, pool) -> _PendingPage:
     low_threshold = ocr_engine.low_conf_threshold if ocr_engine else 0
-    return {
-        "raw_text": builder.text,
-        "bounding_boxes": builder.boxes,
-        "ocr_used": images_ocr > 0,
-        "extraction_method": method,
-        "ocr_mean_confidence": (
-            sum(ocr_confidences) / len(ocr_confidences) if ocr_confidences else None
-        ),
-        "low_confidence_word_count": sum(c < low_threshold for c in ocr_confidences),
-        "images_ocr_count": images_ocr,
-        "images_skipped_count": images_skipped,
-    }
+    builder = PageTextBuilder(page_number, low_threshold)
+    native_rects, jobs = [], []
+    try:
+        native_rects = _add_native_text(page, builder)
+        jobs = _queue_images(page, builder, ocr_engine, dpi, pool)
+        _add_page_hidden_content(page, builder)
+    except (RuntimeError, ValueError) as exc:
+        # A damaged page: report it as not inspected rather than as empty.
+        logger.warning("Page %d could not be fully extracted: %s", page_number, exc)
+        builder.errors.append(f"Page extraction failed: {exc}")
+        area = page.rect * page.derotation_matrix
+        builder.add_unread(area.x0, area.y0, area.width, area.height, reason="page_error")
+    return _PendingPage(builder, native_rects, jobs)
 
 
 def extract_pdf(
@@ -211,31 +258,50 @@ def extract_pdf(
     user_id: str | None = None,
     ocr_engine: OcrEngine | None = None,
     dpi: int = 300,
+    workers: int = OCR_WORKERS,
 ) -> list[ExtractionInput]:
-    """Extract a PDF into one ExtractionInput per page, OCR'ing every embedded image."""
+    """Extract a PDF into one ExtractionInput per page, OCR'ing every embedded image.
+
+    Pages are rendered in order while their images are OCR'd on `workers` threads;
+    at most a few pages are held in memory at once. Raises DocumentValidationError
+    if the file isn't a readable PDF.
+    """
     path = Path(path)
-    file_id = file_id or _file_id_for(path)
+    if validate_document(path) != "pdf":
+        raise DocumentValidationError("unsupported_type", f"{path.name} is not a PDF")
+    file_id = file_id or file_id_for(path)
     source_url = source_url or str(path)
     if ocr_engine is None:
         ocr_engine = OcrEngine()
     if not ocr_engine.is_available():
         logger.warning("Tesseract not found; images will not be OCR'd")
 
+    def to_chunk(builder: PageTextBuilder) -> ExtractionInput:
+        if builder.page_number == 1:
+            for kind, text, location in doc_items:
+                builder.add_hidden(kind, text, location)
+        for title in bookmarks.get(builder.page_number, []):
+            builder.add_hidden("bookmark", title)
+        return ExtractionInput(
+            file_id=file_id,
+            file_name=path.name,
+            source_url=source_url,
+            user_id=user_id,
+            page_number=builder.page_number,
+            **builder.page_data(),
+        )
+
     chunks = []
-    with pymupdf.open(path) as doc:
+    pending: deque[_PendingPage] = deque()
+    with pymupdf.open(path) as doc, ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        doc_items, bookmarks = _document_hidden_content(doc)
         for index, page in enumerate(doc):
-            page_number = index + 1
-            page_data = _extract_page(page, page_number, ocr_engine, dpi)
-            chunks.append(
-                ExtractionInput(
-                    file_id=file_id,
-                    file_name=path.name,
-                    source_url=source_url,
-                    user_id=user_id,
-                    page_number=page_number,
-                    **page_data,
-                )
-            )
+            pending.append(_start_page(page, index + 1, ocr_engine, dpi, pool))
+            # Bound memory: rendered images wait in the queue until their page is finished.
+            while len(pending) > max(1, workers):
+                chunks.append(to_chunk(pending.popleft().finish()))
+        while pending:
+            chunks.append(to_chunk(pending.popleft().finish()))
     return chunks
 
 
@@ -243,7 +309,13 @@ OVERLAY_COLORS = {
     "native": (37, 99, 235),   # blue: real text layer
     "ocr": (22, 163, 74),      # green: OCR word at or above the confidence threshold
     "low": (220, 38, 38),      # red: OCR word below the threshold
+    "unread": (234, 88, 12),   # orange: ink OCR could not read
 }
+
+
+def _draw_box(draw, to_image, box, color, width=2):
+    r = (pymupdf.Rect(box.x, box.y, box.x + box.w, box.y + box.h) * to_image).normalize()
+    draw.rectangle([r.x0, r.y0, r.x1, r.y1], outline=color, width=width)
 
 
 def render_overlays(
@@ -273,30 +345,21 @@ def render_overlays(
             img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             draw = ImageDraw.Draw(img)
 
+            # Boxes are unrotated page points; the render is rotated as displayed.
+            to_image = page.rotation_matrix * pymupdf.Matrix(scale, scale)
             for box in chunk.bounding_boxes or []:
                 if box.source == "ocr" and (box.confidence or 0) < low_conf_threshold:
                     color = OVERLAY_COLORS["low"]
                 else:
                     color = OVERLAY_COLORS.get(box.source, OVERLAY_COLORS["native"])
-                draw.rectangle(
-                    [box.x * scale, box.y * scale,
-                     (box.x + box.w) * scale, (box.y + box.h) * scale],
-                    outline=color,
-                    width=2,
-                )
+                _draw_box(draw, to_image, box, color)
+            for region in chunk.unread_regions:
+                _draw_box(draw, to_image, region, OVERLAY_COLORS["unread"], width=4)
 
             target = out_dir / f"page_{chunk.page_number:02d}.png"
             img.save(target)
             written.append(target)
     return written
-
-
-def save_chunks(chunks: list[ExtractionInput], path: str | Path) -> Path:
-    """Write extracted pages to JSON so later stages can load them without re-running OCR."""
-    path = Path(path)
-    data = [c.model_dump(mode="json") for c in chunks]
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
 
 
 def main():
@@ -310,7 +373,7 @@ def main():
     parser.add_argument(
         "--overlay", metavar="DIR",
         help="Save page images with word boxes drawn on them to DIR "
-             "(blue=native, green=OCR, red=low-confidence OCR; images contain PII)",
+             "(blue=native, green=OCR, red=low-confidence OCR, orange=unread ink; images contain PII)",
     )
     parser.add_argument(
         "--save-chunks", metavar="FILE",

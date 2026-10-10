@@ -1,0 +1,9 @@
+{
+  "_note": "Images known to be decorative (logos). They are not OCR'd and are counted in images_decorative_count instead of skipped. Only add an image after checking it holds no personal data. Find hashes with: python -m extraction FILE --list-images",
+  "images": [
+    {
+      "sha256": "9e4b47f6909ebc2bee3ab57dca9071a7dd2f1ee92eec3365c634b597a74dbada",
+      "note": "Cadence Financial Group logo (409x133 PNG) on every slide of the Organizational Pack"
+    }
+  ]
+}
