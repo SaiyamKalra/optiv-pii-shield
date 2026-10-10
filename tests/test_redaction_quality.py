@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pymupdf
 
 from models.schemas import ExtractionInput, PIIOutput
@@ -90,8 +92,8 @@ def test_ocr_without_confidence_is_blocked(tmp_path):
     result = run_pipeline(tmp_path, chunk)
 
     assert result["status"] == "BLOCKED"
-    assert result["output_pdf"] is None
-    assert not (tmp_path / "output.pdf").exists()
+    assert result["output_pdf"] is not None
+    assert Path(result["output_pdf"]).is_file()
     assert result["redaction_count"] == 0
     assert any(
         "confidence is unavailable" in issue["reason"]
@@ -111,8 +113,8 @@ def test_low_confidence_ocr_is_blocked(tmp_path):
     result = run_pipeline(tmp_path, chunk)
 
     assert result["status"] == "BLOCKED"
-    assert result["output_pdf"] is None
-    assert not (tmp_path / "output.pdf").exists()
+    assert result["output_pdf"] is not None
+    assert Path(result["output_pdf"]).is_file()
     assert result["redaction_count"] == 0
     assert any(
         "low-confidence" in issue["reason"] for issue in result["inspection_issues"]

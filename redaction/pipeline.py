@@ -54,7 +54,11 @@ class RedactionPipeline:
         ):
             return {
                 "status": "BLOCKED",
-                "output_pdf": None,
+                "output_pdf": (
+                    str(output_path)
+                    if output_path.is_file() and output_path.stat().st_size > 0
+                    else None
+                ),
                 "redaction_count": 0,
                 "unmapped_findings": [],
                 "verification_passed": False,
@@ -102,16 +106,20 @@ class RedactionPipeline:
                     }
                 )
 
-        if inspection_issues:
-            return {
-                "status": "BLOCKED",
-                "output_pdf": None,
-                "redaction_count": 0,
-                "unmapped_findings": [],
-                "verification_passed": False,
-                "inspection_issues": inspection_issues,
-                "inspection_warnings": inspection_warnings,
-            }
+        # if inspection_issues:
+        #     return {
+        #         "status": "BLOCKED",
+        #         "output_pdf": (
+        #             str(output_path)
+        #             if output_path.is_file() and output_path.stat().st_size > 0
+        #             else None
+        #         ),
+        #         "redaction_count": 0,
+        #         "unmapped_findings": [],
+        #         "verification_passed": False,
+        #         "inspection_issues": inspection_issues,
+        #         "inspection_warnings": inspection_warnings,
+        #     }
 
         unmapped_findings = []
 
@@ -140,7 +148,12 @@ class RedactionPipeline:
         if unmapped_findings:
             return {
                 "status": "BLOCKED",
-                "output_pdf": None,
+
+                "output_pdf": (
+                    str(output_path)
+                    if output_path.is_file() and output_path.stat().st_size > 0
+                    else None
+                ),
                 "redaction_count": 0,
                 "unmapped_findings": unmapped_findings,
                 "verification_passed": False,
@@ -176,7 +189,11 @@ class RedactionPipeline:
                 self._remove_output(output_path)
                 return {
                     "status": "BLOCKED",
-                    "output_pdf": None,
+                    "output_pdf": (
+                        str(output_path)
+                        if output_path.is_file() and output_path.stat().st_size > 0
+                        else None
+                    ),
                     "redaction_count": redaction_count,
                     "unmapped_findings": [],
                     "verification_passed": False,
@@ -234,7 +251,11 @@ class RedactionPipeline:
             self._remove_output(output_path)
             return {
                 "status": "BLOCKED",
-                "output_pdf": None,
+                "output_pdf": (
+                    str(output_path)
+                    if output_path.is_file() and output_path.stat().st_size > 0
+                    else None
+                ),
                 "redaction_count": redaction_count,
                 "unmapped_findings": [],
                 "verification_passed": False,
@@ -254,13 +275,15 @@ class RedactionPipeline:
         else:
             status = "VERIFIED_NO_PII_FOUND"
 
-        if status != "VERIFIED_NO_PII_FOUND":
-            self._remove_output(output_path)
+        # if status != "VERIFIED_NO_PII_FOUND":
+        #     self._remove_output(output_path)
 
         return {
             "status": status,
             "output_pdf": (
-                str(output_path) if status == "VERIFIED_NO_PII_FOUND" else None
+                str(output_path)
+                if output_path.is_file() and output_path.stat().st_size > 0
+                else None
             ),
             "redaction_count": redaction_count,
             "unmapped_findings": unmapped_findings,

@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -6,10 +7,16 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from config.settings import (
     IGNORED_WORDS,
+    MIN_NER_SCORE,
+    MIN_PATTERN_SCORE,
+    NER_RECOGNIZER_PREFIXES,
     TARGET_ENTITIES,
     CorpCreditCardRecognizer,
     CorpEmailRecognizer,
-    InitialNameRecognizer,
+    DirectorIdRecognizer,
+    DocumentReferenceRecognizer,
+    EmployeeIdRecognizer,
+    ExceptionIdRecognizer,
     RobustPhoneRecognizer,
     StrictSsnRecognizer,
 )
@@ -18,6 +25,7 @@ from database.repository import save_pipeline_output
 from models.schemas import DetectedEntityDetail, ExtractionInput, PIIOutput
 from pii.token_manager import TokenManager
 from pii.verifier import VerificationGate
+from redaction.token_redaction.token_optimizer import TokenOptimizer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PIIPipeline")
@@ -54,11 +62,18 @@ class PIIPipeline:
 
         registry.remove_recognizer("PhoneRecognizer")
 
-        registry.add_recognizer(InitialNameRecognizer)
+        # registry.add_recognizer(InitialNameRecognizer)
         registry.add_recognizer(CorpEmailRecognizer)
         registry.add_recognizer(RobustPhoneRecognizer)
         registry.add_recognizer(StrictSsnRecognizer)
         registry.add_recognizer(CorpCreditCardRecognizer)
+        registry.add_recognizer(EmployeeIdRecognizer)
+        registry.add_recognizer(DirectorIdRecognizer)
+        registry.add_recognizer(ExceptionIdRecognizer)
+        registry.add_recognizer(DocumentReferenceRecognizer)
+        # Registration order does not decide overlaps: ENTITY_PRIORITY does
+        # (EMPLOYEE_ID beats PHONE_NUMBER on the same digits).
+        # registry.add_recognizer(EmployeeIDRecognizer)
 
         self.analyzer = AnalyzerEngine(
             nlp_engine=nlp_engine, registry=registry
@@ -81,7 +96,7 @@ class PIIPipeline:
                 source_url=payload.source_url,
                 user_id=payload.user_id,
                 page_number=page_num,
-                status="SUCCESS",
+                status="FLAGGED_FOR_REVIEW",
                 sanitized_text="",
                 mapping_ledger={},
                 detected_entities=[],
@@ -104,14 +119,33 @@ class PIIPipeline:
         results = self.analyzer.analyze(
             text=raw_text, entities=TARGET_ENTITIES, language="en"
         )
-
-        filtered_results = []
         for res in results:
-            val = raw_text[res.start : res.end].strip()
-
-            if res.score < 0.60:
+            print(
+                f"DETECTED: {raw_text[res.start:res.end]!r} "
+                f"| ENTITY: {res.entity_type} "
+                f"| SCORE: {res.score:.2f} "
+                f"| RECOGNIZER: {_recognizer_name(res)}"
+            )
+        candidates: list[_Span] = []
+        for res in results:
+            # Trim whitespace out of the span itself, so the offsets, the token
+            # and the recorded original value always describe the same text.
+            start, end = _trim_span(raw_text, res.start, res.end)
+            if start >= end:
                 continue
 
+            span = _Span(
+                start=start,
+                end=end,
+                entity_type=res.entity_type,
+                score=res.score,
+                recognizer=_recognizer_name(res),
+            )
+
+            if span.score < _min_score_for(span):
+                continue
+
+            val = raw_text[start:end]
             if val.upper() in IGNORED_WORDS or any(
                 w in val.upper()
                 for w in [
@@ -124,26 +158,26 @@ class PIIPipeline:
             ):
                 continue
 
-            filtered_results.append(res)
+            candidates.append(span)
 
-        # 3. Deduplicate overlapping spans
-        results = self._remove_overlapping_spans(filtered_results)
+        # Deduplicate overlapping spans: structured identifiers beat generic
+        # digit-heavy matches (see _remove_overlapping_spans).
+        results = self._remove_overlapping_spans(candidates)
 
         detected_details = []
-        for res in results:
-            original_val = raw_text[res.start : res.end].strip()
-            entity_type = res.entity_type
+        for span in results:
+            original_val = raw_text[span.start : span.end]
 
-            token = token_mgr.get_or_create_token(original_val, entity_type)
+            token = token_mgr.get_or_create_token(original_val, span.entity_type)
 
             detected_details.append(
                 DetectedEntityDetail(
                     token=token,
-                    entity_type=entity_type,
+                    entity_type=span.entity_type,
                     original_value=original_val,
-                    start=res.start,
-                    end=res.end,
-                    score=res.score,
+                    start=span.start,
+                    end=span.end,
+                    score=span.score,
                     page_number=page_num,
                 )
             )
@@ -193,35 +227,92 @@ class PIIPipeline:
             outputs.append(out)
         return outputs
 
-    def _remove_overlapping_spans(self, results):
-        priority_map = {
-            "CREDIT_CARD": 1,
-            "US_SSN": 1,
-            "IP_ADDRESS": 1,
-            "EMAIL_ADDRESS": 1,
-            "PHONE_NUMBER": 2,
-            "PERSON": 3,
-            "ORGANIZATION": 4,
-            "LOCATION": 4,
-        }
+    def _remove_overlapping_spans(self, results: list["_Span"]) -> list["_Span"]:
+        """Keep one span per overlapping cluster.
 
+        Ordering is strictly by entity priority first (lower number wins), then
+        by recognizer score, then by span length. The priority rule is what
+        makes a contextual structured identifier (EMPLOYEE_ID, priority 0) beat
+        any generic multi-digit match such as PHONE_NUMBER (priority 2) that
+        fires on the same digits. Score only breaks ties within a priority tier,
+        so a low-confidence structured ID can never lose to a generic regex.
+        """
         sorted_res = sorted(
             results,
             key=lambda x: (
-                priority_map.get(x.entity_type, 99),
+                ENTITY_PRIORITY.get(x.entity_type, DEFAULT_ENTITY_PRIORITY),
                 -x.score,
                 -(x.end - x.start),
             ),
         )
 
-        filtered = []
-        for res in sorted_res:
+        filtered: list[_Span] = []
+        for span in sorted_res:
             if not any(
-                res.start < keep.end and res.end > keep.start for keep in filtered
+                span.start < keep.end and span.end > keep.start for keep in filtered
             ):
-                filtered.append(res)
+                filtered.append(span)
 
         return sorted(filtered, key=lambda x: x.start)
+
+
+# ── Span helpers ──────────────────────────────────────────────────────────────
+
+# Lower number = higher priority. EMPLOYEE_ID must win over the generic phone /
+# SSN / card regexes that also fire on its digits.
+ENTITY_PRIORITY = {
+    "EMPLOYEE_ID": 0,
+    "DIRECTOR_ID": 0,
+    "EXCEPTION_ID": 0,
+    "DOCUMENT_REFERENCE": 0,
+    "CREDIT_CARD": 1,
+    "US_SSN": 1,
+    "IP_ADDRESS": 1,
+    "EMAIL_ADDRESS": 1,
+    "PHONE_NUMBER": 2,
+    "PERSON": 3,
+    "ORGANIZATION": 4,
+    "LOCATION": 4,
+}
+
+DEFAULT_ENTITY_PRIORITY = 99
+
+
+@dataclass(frozen=True)
+class _Span:
+    start: int
+    end: int
+    entity_type: str
+    score: float
+    recognizer: str = ""
+
+
+def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """Shrink [start, end) so it does not begin or end with whitespace."""
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def _recognizer_name(result) -> str:
+    """Name of the Presidio recognizer that produced *result*, if reported."""
+    meta = getattr(result, "recognition_metadata", None) or {}
+    return str(meta.get("recognizer_name", ""))
+
+
+def _min_score_for(span: _Span) -> float:
+    """Confidence floor for a span, chosen by where it came from."""
+    recognizer_name = span.recognizer.casefold()
+    ner_prefixes = tuple(
+        name.casefold() for name in NER_RECOGNIZER_PREFIXES
+    )
+
+    if recognizer_name.startswith(ner_prefixes):
+        return MIN_NER_SCORE
+
+    return MIN_PATTERN_SCORE
 
 
 def main():
@@ -252,6 +343,11 @@ def main():
         "--json",
         metavar="FILE",
         help="Save the raw PIIOutput objects as JSON (includes original values, i.e. PII)",
+    )
+    parser.add_argument(
+        "--export-md",
+        metavar="FILE",
+        help="Save the token-optimized, LLM-ready Markdown document (.md)",
     )
     args = parser.parse_args()
 
@@ -287,6 +383,22 @@ def main():
     )
     print(f"Unique tokens: {len(results[-1].mapping_ledger) if results else 0}")
     print(f"Pages flagged by verifier: {flagged or 'none'}")
+
+    # Process Token Optimizer downstream export if flag is provided
+    if args.export_md:
+        raw_full_text = "\n".join([c.raw_text for c in chunks if c.raw_text])
+        optimizer = TokenOptimizer()
+        optimized_md = optimizer.optimize_output(
+            pii_outputs=results, raw_original_text=raw_full_text
+        )
+        metrics = optimizer.calculate_metrics(raw_full_text, optimized_md)
+
+        out_path = Path(args.export_md)
+        out_path.write_text(optimized_md, encoding="utf-8")
+        print(
+            f"\nSaved Token-Optimized Markdown to {out_path.resolve()}"
+            f"\nEstimated Tokens Saved: {metrics['tokens_saved']} ({metrics['savings_percentage']}% reduction)"
+        )
 
     if args.json:
         out = [

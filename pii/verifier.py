@@ -10,8 +10,8 @@ class VerificationGate:
 
     def verify(self, sanitized_text: str) -> bool:
 
-        if not sanitized_text.strip():
-            return True
+        if not sanitized_text or not sanitized_text.strip():
+            return False
 
         secondary_results = self.analyzer.analyze(
             text=sanitized_text,

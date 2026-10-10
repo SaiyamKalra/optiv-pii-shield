@@ -33,7 +33,7 @@ jobs:
 
       - name: Download spaCy model
         run: |
-          python -m spacy download en_core_web_sm
+          python -m spacy download en_core_web_lg
 
       - name: Run Ruff Lint Check
         run: |

@@ -1,3 +1,4 @@
+
 import pymupdf
 
 from extraction.pdf_extractor import extract_pdf

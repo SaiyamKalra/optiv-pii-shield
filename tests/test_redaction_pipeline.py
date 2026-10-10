@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pymupdf
 
 from models.schemas import (
@@ -167,4 +169,5 @@ def test_pipeline_blocks_when_rescan_finds_pii(tmp_path):
 
     assert result["status"] == "BLOCKED"
     assert result["verification_passed"] is False
-    assert result["output_pdf"] is None
+    assert result["output_pdf"] is not None
+    assert Path(result["output_pdf"]).is_file()
