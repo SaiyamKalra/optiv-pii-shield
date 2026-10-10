@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from models.schemas import PIIOutput
@@ -62,7 +62,7 @@ class TokenOptimizer:
                 f"---\n"
                 f"title: {first_doc.file_name}\n"
                 f"file_id: {first_doc.file_id}\n"
-                f"processed_at: {datetime.now(timezone.utc).isoformat()}\n"
+                f"processed_at: {datetime.now(UTC).isoformat()}\n"
                 f"total_pages: {len(pii_outputs)}\n"
                 f"estimated_tokens_saved: {metrics['tokens_saved']} ({metrics['savings_percentage']}%)\n"
                 f"---\n\n"
