@@ -81,7 +81,7 @@ class PDFRedactor:
 
                 page.apply_redactions()
 
-            document.save(output_pdf)
+            document.save(output_pdf, garbage=3, deflate=True, deflate_images=True)
 
         finally:
             document.close()
