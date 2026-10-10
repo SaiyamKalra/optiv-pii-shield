@@ -9,11 +9,20 @@ pandas
 sqlalchemy
 psycopg2-binary
 
+# UI (app.py)
+streamlit
+plotly
+
 # PDF extraction + OCR (also requires the Tesseract binary, installed separately)
 PyMuPDF>=1.24.0
 pytesseract>=0.3.10
 Pillow>=10.0.0
 python-dotenv>=1.0.0
+numpy>=1.26
+
+# DOCX + PPTX extraction (embedded images are OCR'd with the same Tesseract engine)
+python-docx>=1.1.0
+python-pptx>=1.0.0
 
 pytest>=8.0.0
 ruff>=0.3.0

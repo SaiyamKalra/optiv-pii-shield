@@ -2,7 +2,13 @@ from pydantic import BaseModel, Field
 
 
 class BoundingBox(BaseModel):
-    """One word on a page. x, y, w, h are PDF points with a top-left origin."""
+    """One word on a page/slide.
+
+    With coord_space="page_pt" (default), x, y, w, h are points with a top-left
+    origin on the page (PDF) or slide (PPTX). With coord_space="image_px", they
+    are pixels inside the embedded image named by image_ref (e.g. DOCX images,
+    which have no fixed page position).
+    """
 
     page: int
     text: str
@@ -22,6 +28,39 @@ class BoundingBox(BaseModel):
     confidence: float | None = Field(
         None, description="Tesseract word confidence 0-100; None for native text"
     )
+    coord_space: str = Field(
+        "page_pt", description="'page_pt' (page/slide points) or 'image_px' (pixels in image_ref)"
+    )
+    image_ref: str | None = Field(
+        None, description="Embedded image the word was OCR'd from, e.g. '/word/media/image3.png'"
+    )
+
+
+class HiddenContent(BaseModel):
+    """Text stored in the file but not shown on the page (kept out of raw_text so
+    raw_text offsets still map to visible word boxes). Downstream PII scanning
+    must check these too."""
+
+    kind: str = Field(
+        ..., description="e.g. metadata, comment, footnote, endnote, alt_text, "
+                         "deleted_text, annotation, form_field, bookmark, embedded_file"
+    )
+    text: str
+    location: str | None = Field(None, description="Where in the file, e.g. 'author' or 'comment 3'")
+
+
+class UnreadRegion(BaseModel):
+    """An image area that holds marks OCR could not read (e.g. a barcode over text).
+    Treat as possibly containing PII: redact the whole region if unsure."""
+
+    page: int
+    x: float
+    y: float
+    w: float
+    h: float
+    coord_space: str = "page_pt"
+    image_ref: str | None = None
+    reason: str = "unread_ink"
 
 
 class ExtractionInput(BaseModel):
@@ -48,6 +87,14 @@ class ExtractionInput(BaseModel):
     low_confidence_word_count: int = 0
     images_ocr_count: int = 0
     images_skipped_count: int = 0
+    images_decorative_count: int = Field(
+        0, description="Images on the decorative allowlist (logos), not OCR'd"
+    )
+    hidden_content: list[HiddenContent] = Field(default_factory=list)
+    unread_regions: list[UnreadRegion] = Field(default_factory=list)
+    extraction_errors: list[str] = Field(
+        default_factory=list, description="Problems extracting this page; treat as not inspected"
+    )
 
 
 class DetectedEntityDetail(BaseModel):

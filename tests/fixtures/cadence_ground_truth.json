@@ -1,0 +1,74 @@
+{
+  "_note": "Ground truth for the Optiv Case Study 2 sample files. All Cadence values are synthetic (the files state every name and identifier is fabricated). DOCX checks use non-personal UI text only.",
+  "files": {
+    "Cadence_Group_Risk_Management_Policy__v6.0.pdf": {
+      "identifiers": [
+        [1, "m.achebe@cadencefg.com"], [1, "+1 (212) 555-0147"], [1, "+1 (917) 555-0143"], [1, "EMP-38104"],
+        [1, "EMP-40522"], [1, "t.lindqvist@cadencefg.com"], [1, "d.okonjo@cadencefg.com"], [1, "+1 (212) 555-0188"],
+        [2, "r.achterberg@cadencefg.com"], [2, "EMP-37012"], [2, "h.vorstermann@cadencefg.com"], [2, "+44 20 7555 0163"],
+        [2, "s.balakrishnan@halloranpike.example"], [2, "a.brightwell@cadencefg.com"],
+        [3, "m.duboiskane@cadencefg.com"], [3, "+33 1 5555 0144"], [3, "a.chatterjee@cadencefg.com"],
+        [3, "a.nakamurareed@cadencefg.com"], [3, "+65 6555 0172"], [3, "EMP-42019"],
+        [4, "y.sorokina@cadencefg.com"], [4, "d.kulkarni@cadencefg.com"], [4, "m.szewczyk@cadencefg.com"], [4, "+48 22 555 0164"],
+        [5, "n.osadebe@cadencefg.com"], [5, "EMP-41077"], [5, "c.whitfield@cadencefg.com"], [5, "EMP-38907"], [5, "+1 646 555-0188"],
+        [6, "b.oseitutu@cadencefg.com"], [6, "+1 (212) 555-0136"], [6, "f.nakagawa@cadencefg.com"], [6, "p.raghavan@cadencefg.com"],
+        [6, "DIR-0042"], [6, "b.lindenau@cadencefg.com"], [6, "+49 69 5555 0177"], [6, "DIR-0063"],
+        [7, "+1 (917) 555-0146"], [7, "88 Willowbank Court"], [7, "Hoboken, NJ 07030"], [7, "+1 (917) 555-0104"],
+        [7, "i.adeyemi@cadencefg.com"], [7, "+1 917 555-0111"], [7, "EMP-36781"],
+        [8, "k.ohlendorf@northwind.example"], [8, "+49 69 5555 0148"], [8, "EMP-41455"], [8, "EMP-39044"],
+        [9, "+1 (646) 555-0119"], [9, "EMP-37655"], [9, "EMP-38066"], [9, "EMP-38412"],
+        [10, "n.okonkwobryce@cadencefg.com"], [10, "EMP-41502"], [10, "l.brannstrom@cadencefg.com"], [10, "EMP-41519"],
+        [10, "EMP-41522"], [10, "EMP-41187"],
+        [12, "+91 98860 55107"], [12, "EMP-39220"],
+        [13, "EMP-39877"], [13, "EMP-38550"],
+        [15, "EMP-39871"],
+        [16, "f.qureshi@cadencefg.com"], [16, "+91 98213 55228"],
+        [17, "EMP-41402"], [17, "EMP-37903"],
+        [18, "EMP-41184"], [18, "DIR-0063"],
+        [19, "EMP-40318"],
+        [21, "+48 512 555 0180"], [21, "y.balogun@cadencefg.com"],
+        [22, "e.petrovska@meridianstaffing.example"], [22, "+1 646 555-0203"], [22, "900-55-2043"], [22, "TK4820913"],
+        [22, "AQBPR7741L"], [22, "900-42-7781"], [22, "1180 Ashwood Lane"], [22, "Jersey City, NJ 07302"],
+        [22, "14 July 1991"], [22, "EMP-40944"], [22, "EMP-40766"], [22, "EMP-41310"], [22, "EMP-41488"], [22, "EMP-41142"],
+        [23, "2214 Palmetto Crescent"], [23, "Coral Gables, FL 33134"], [23, "(305) 555-0143"], [23, "+1 (704) 555-0131"],
+        [23, "3 August 1996"], [23, "+46 70 555 0188"], [23, "+44 7700 555 0163"], [23, "+1 (917) 555-0102"],
+        [23, "+48 512 555 0193"], [23, "EMP-35440"], [23, "EMP-41157"],
+        [24, "+1 (212) 555-0193"],
+        [25, "BKTPV2290H"], [25, "CDRPK6612M"], [25, "890412xxxxx"], [25, "+91 98452 55011"], [25, "+91 99009 55042"],
+        [25, "m.twilley@veritrace.example"], [25, "MER-IN-4471"], [25, "MER-IN-4488"], [25, "MER-IN-4502"], [25, "MER-PL-1187"],
+        [27, "+63 917 555 0119"], [27, "MER-PH-2214"],
+        [28, "28 February 1979"], [28, "+1 (800) 555-0177"], [28, "EMP-38104"],
+        [32, "+1 (212) 555-0100"], [32, "board.chair@cadencefg.com"], [32, "DIR-0001"],
+        [34, "+44 20 7555 0171"]
+      ],
+      "rows": [
+        [3, ["Miriam T. Achebe", "EMP-38104", "m.achebe@cadencefg.com"]],
+        [6, ["Anthony P. Brightwell", "DIR-0042", "a.brightwell@cadencefg.com"]],
+        [9, ["Naomi K. Osadebe", "EMP-41077", "n.osadebe@cadencefg.com"]],
+        [12, ["BRC-2026-011", "Miriam T. Achebe"]],
+        [21, ["ISS-2026-0112", "Naomi K. Osadebe"]],
+        [25, ["Rohan S. Deshmukh", "MER-IN-4471", "AQBPR7741L", "+91 98452 55011"]],
+        [28, ["Hiroshi Yamagata", "EMP-41310"]],
+        [32, ["Miriam T. Achebe", "EMP-38104", "m.achebe@cadencefg.com"]]
+      ]
+    },
+    "Cadence_Financial_Group_Organizational_Pack.pptx": {
+      "identifiers": [
+        [3, "m.vossberg@cadencefg.example"], [3, "+1 (555) 0114"], [3, "y.elkatib@cadencefg.example"],
+        [4, "e.bertucci@cadencefg.example"], [4, "h.park@cadencefg.example"],
+        [5, "s.aarnio@cadencefg.example"], [5, "r.quintanilla@cadencefg.example"],
+        [8, "m.vossberg@cadencefg.example"], [8, "b.nkemdirim@cadencefg.example"], [8, "+1 (555) 0196"],
+        [8, "a.okonkwobell@cadencefg.example"], [8, "+1 (555) 0188"]
+      ],
+      "rows": [
+        [8, ["Marguerite Vossberg", "Chief Executive Officer", "m.vossberg@cadencefg.example", "+1 (555) 0114"]],
+        [8, ["Solveig Aarnio", "Director, Third-Party Risk", "s.aarnio@cadencefg.example"]],
+        [6, ["AI use-case intake and approval", "I", "R", "A"]]
+      ]
+    },
+    "Cadence_TPRM_Training.docx": {
+      "text": ["Vendor Risk Management Group", "Save attribute", "Vendor workflows", "Add user group", "Copy logic to additional questions"],
+      "min_images_ocr": 35
+    }
+  }
+}
