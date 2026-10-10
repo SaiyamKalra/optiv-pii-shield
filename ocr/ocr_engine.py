@@ -4,6 +4,8 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -25,8 +27,10 @@ LOW_CONF_THRESHOLD = 60.0
 # Characters Tesseract may not output. "|" is almost never real text in a scan, but
 # Tesseract picks it for a lowercase "l", which breaks emails like "l.brannstrom@...".
 CHAR_BLACKLIST = "|"
-# Images OCR'd at once. Each Tesseract call is its own process, so threads overlap them.
-OCR_WORKERS = max(1, min(4, (os.cpu_count() or 2) - 1))
+# Share of the CPUs used for OCR when OCR_WORKERS isn't set (leaves headroom for the rest
+# of the machine), and an upper bound so memory for queued page images stays modest.
+OCR_CPU_SHARE = 0.75
+OCR_MAX_WORKERS = 16
 # Seconds before a single Tesseract call is abandoned.
 OCR_TIMEOUT_S = 180
 
@@ -46,6 +50,35 @@ DARK_BAND = 0.6               # regions this dark hold light text on a dark fill
 LINE_RETRY_MAX = 30           # most low-confidence lines re-read per image
 ORIENTATION_MIN_GAIN = 1.5    # a rotation must read this much better to be used
 LONG_LINE_FRACTION = 0.08     # straight runs longer than this share of the image are rules/borders
+
+
+def _usable_cpus() -> int:
+    """CPUs this process may run on (respects affinity/container limits where Python can see them)."""
+    counter = getattr(os, "process_cpu_count", None)  # Python 3.13+
+    if counter is not None:
+        return counter() or 1
+    if hasattr(os, "sched_getaffinity"):  # Linux
+        return len(os.sched_getaffinity(0)) or 1
+    return os.cpu_count() or 1
+
+
+def default_ocr_workers() -> int:
+    """How many images to OCR at once on this machine.
+
+    OCR_WORKERS (environment or .env) wins when it is a positive integer; otherwise
+    75% of the usable CPUs, at least 1 and at most OCR_MAX_WORKERS.
+    """
+    load_dotenv()
+    configured = os.environ.get("OCR_WORKERS", "").strip()
+    if configured:
+        try:
+            value = int(configured)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+        logger.warning("Ignoring invalid OCR_WORKERS=%r", configured)
+    return max(1, min(OCR_MAX_WORKERS, round(_usable_cpus() * OCR_CPU_SHARE)))
 
 
 def resolve_tesseract_cmd() -> str | None:
@@ -152,6 +185,10 @@ class OcrEngine:
 
     def _run(self, img: Image.Image, scale: float, psm: int | None = None) -> list[OcrWord]:
         processed, scale = self.preprocess(img, scale)
+        return self._tesseract(processed, scale, psm)
+
+    def _tesseract(self, processed: Image.Image, scale: float, psm: int | None = None) -> list[OcrWord]:
+        """Run Tesseract on an already preprocessed image; boxes are divided by scale."""
         # pytesseract reads the binary path from a module global; set it per call so
         # engines configured with different binaries don't interfere.
         pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
@@ -243,46 +280,57 @@ class OcrEngine:
         for w in words:
             lines.setdefault((w.block, w.par, w.line), []).append(w)
 
-        result = []
-        retries = 0
-        for key, line_words in lines.items():
-            # Only lines with a real low-confidence word (3+ characters) are worth re-reading.
-            hard = any(
+        # Only lines with a real low-confidence word (3+ characters) are worth re-reading.
+        hard = [
+            key for key, line_words in lines.items()
+            if any(
                 is_meaningful(w) and len(w.text) >= 3 and w.conf < self.low_conf_threshold
                 for w in line_words
             )
-            if not hard or retries >= LINE_RETRY_MAX:
-                result.extend(line_words)
+        ][:LINE_RETRY_MAX]
+        boxes = [_line_box(lines[key], img.size) for key in hard]
+        candidates = [(key, box) for key, box in zip(hard, boxes, strict=True) if box is not None]
+        rereads = self._read_crops(img, [box for _, box in candidates], LINE_RETRY_SCALE, psm=7)
+
+        replaced = {}
+        for i, (key, _) in enumerate(candidates):
+            reread = rereads.get(i)
+            if not reread:
                 continue
-            retries += 1
-            better = self._reread_line(img, line_words, key)
-            result.extend(better if better is not None else line_words)
+            if mean_confidence(reread) < mean_confidence(lines[key]) + LINE_RETRY_MIN_GAIN:
+                continue
+            block, par, line = key
+            for w in reread:
+                w.block, w.par, w.line = block, par, line
+            replaced[key] = reread
+
+        result = []
+        for key, line_words in lines.items():
+            result.extend(replaced.get(key, line_words))
         return result
 
-    def _reread_line(self, img, line_words, key) -> list[OcrWord] | None:
-        x0 = min(w.left for w in line_words)
-        y0 = min(w.top for w in line_words)
-        x1 = max(w.left + w.width for w in line_words)
-        y1 = max(w.top + w.height for w in line_words)
-        pad = max(4.0, 0.35 * (y1 - y0))
-        box = _clamp_box((x0 - pad, y0 - pad, x1 + pad, y1 + pad), img.size)
-        if box is None:
-            return None
+    # --- re-reading many small crops ---------------------------------------------------
+    def _read_crops(
+        self, img: Image.Image, boxes: list[tuple[int, int, int, int]], scale: float, psm: int
+    ) -> dict[int, list[OcrWord]]:
+        """OCR several crops of img in parallel (each Tesseract call is its own process).
 
-        crop = img.crop(box)
-        try:
-            reread = self._run(crop, scale=LINE_RETRY_SCALE, psm=7)
-        except RuntimeError:
-            return None
-        if mean_confidence(reread) < mean_confidence(line_words) + LINE_RETRY_MIN_GAIN:
-            return None
+        Returns words per crop index, in the original image's pixel coordinates. A failed
+        crop is left out of the result, so callers keep what they had.
+        """
+        def read(box):
+            try:
+                words = self._run(img.crop(box), scale=scale, psm=psm)
+            except RuntimeError as exc:
+                logger.info("Re-read of crop %s failed: %s", box, exc)
+                return None
+            for w in words:
+                w.left += box[0]
+                w.top += box[1]
+            return words
 
-        block, par, line = key
-        for w in reread:
-            w.left += box[0]
-            w.top += box[1]
-            w.block, w.par, w.line = block, par, line
-        return reread
+        results = _crop_pool().map(read, boxes) if len(boxes) > 1 else map(read, boxes)
+        return {i: words for i, words in enumerate(results) if words is not None}
 
     # --- second pass: ink that no word covers -----------------------------------------
     def _read_uncovered_ink(self, img: Image.Image, words: list[OcrWord],
@@ -291,22 +339,20 @@ class OcrEngine:
         if not regions:
             return words
 
+        pad = 8
+        boxes = [
+            box for box in (
+                _clamp_box((r[0] - pad, r[1] - pad, r[2] + pad, r[3] + pad), img.size)
+                for r in regions
+            )
+            if box is not None
+        ]
+        found_by_region = self._read_crops(img, boxes, float(UPSCALE_FACTOR), psm=11)
+
         next_block = max((w.block for w in words), default=0) + 1
         added = []
-        for region in regions:
-            pad = 8
-            box = _clamp_box(
-                (region[0] - pad, region[1] - pad, region[2] + pad, region[3] + pad), img.size
-            )
-            if box is None:
-                continue
-            try:
-                found = self._run(img.crop(box), scale=float(UPSCALE_FACTOR), psm=11)
-            except RuntimeError:
-                continue
-            for w in found:
-                w.left += box[0]
-                w.top += box[1]
+        for index in range(len(boxes)):
+            for w in found_by_region.get(index, []):
                 # Only keep confident recoveries; anything else stays reported as unread.
                 if w.conf < self.low_conf_threshold or not is_meaningful(w):
                     continue
@@ -481,3 +527,34 @@ def _is_hollow_frame(ink: np.ndarray) -> bool:
     inset_y, inset_x = max(3, int(0.15 * height)), max(3, int(0.15 * width))
     interior = ink[inset_y:height - inset_y, inset_x:width - inset_x]
     return interior.size > 0 and interior.mean() < 0.005
+
+
+def _line_box(line_words: list[OcrWord], size) -> tuple[int, int, int, int] | None:
+    """A line's bounding box with some padding, clamped to the image."""
+    x0 = min(w.left for w in line_words)
+    y0 = min(w.top for w in line_words)
+    x1 = max(w.left + w.width for w in line_words)
+    y1 = max(w.top + w.height for w in line_words)
+    pad = max(4.0, 0.35 * (y1 - y0))
+    return _clamp_box((x0 - pad, y0 - pad, x1 + pad, y1 + pad), size)
+
+
+
+# Images OCR'd at once, decided per machine (see default_ocr_workers).
+OCR_WORKERS = default_ocr_workers()
+
+_CROP_POOL: ThreadPoolExecutor | None = None
+_CROP_POOL_LOCK = threading.Lock()
+
+
+def _crop_pool() -> ThreadPoolExecutor:
+    """Shared pool for re-reading crops of one image in parallel.
+
+    Separate from the per-page pools (a page task waiting on its own pool could
+    deadlock), and shared so all images together stay within OCR_WORKERS extra calls.
+    """
+    global _CROP_POOL
+    with _CROP_POOL_LOCK:
+        if _CROP_POOL is None:
+            _CROP_POOL = ThreadPoolExecutor(max_workers=OCR_WORKERS, thread_name_prefix="ocr-crop")
+        return _CROP_POOL
