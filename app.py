@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
-import pymupdf
 import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -22,11 +21,10 @@ from analytics.metrics import (
     fetch_risk_exposure_matrix,
 )
 from extraction.pdf_extractor import extract_pdf
-from models.schemas import PIIOutput
 from pii.pipeline import PIIPipeline
+from redaction.office_pipeline import OfficeRedactionPipeline
 from redaction.pipeline import RedactionPipeline
 from redaction.token_redaction.token_optimizer import TokenOptimizer
-from redaction.office_pipeline import OfficeRedactionPipeline
 
 st.set_page_config(
     page_title="PII Sentinel",
@@ -956,9 +954,15 @@ elif st.session_state.screen == "findings" and st.session_state.res:
                             mime="text/markdown",
                             use_container_width=True,
                         )
-                except Exception:
+                except (
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    OSError,
+                ) as exc:
                     st.error(
-                        "Could not generate the Markdown export. "
+                        f"Could not generate the Markdown export: {type(exc).__name__}. "
                         "Check the application logs."
                     )
 

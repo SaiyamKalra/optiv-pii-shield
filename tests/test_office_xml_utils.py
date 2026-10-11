@@ -1,6 +1,6 @@
 import xml.etree.ElementTree as ET
 
-from redaction.office_xml_utils import redact_xml, mask_text
+from redaction.office_xml_utils import mask_text, redact_xml
 
 
 def test_masks_pii_in_xml_text():

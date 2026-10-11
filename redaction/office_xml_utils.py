@@ -1,7 +1,7 @@
-from pathlib import Path
-from zipfile import ZipFile, ZIP_DEFLATED
 import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 
 def get_pii_values(pii_results):
@@ -146,7 +146,7 @@ def redact_office_archive(input_path, output_path, pii_results):
                 raise ValueError(f"Output package is corrupt: {bad_part}")
 
             for name in check.namelist():
-                if name.endswith(".xml") or name.endswith(".rels"):
+                if name.endswith((".xml", ".rels")):
                     try:
                         ET.fromstring(check.read(name))
                     except ET.ParseError as exc:
