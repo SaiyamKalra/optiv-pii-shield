@@ -557,10 +557,20 @@ if "thr" not in st.session_state:
     st.session_state.thr = 0.70
 
 
+COVERAGE_REQUIRED_PCT = 95.0
+
+
 def verdict(res, thr):
-    df = res["findings"]
-    review = int((df["Confidence"] < thr).sum())
-    coverage = res["reliable"] / res["pages"] * 100 if res["pages"] > 0 else 0
+    """Return (state, low_confidence_count, word_coverage_pct)."""
+    df = res.get("findings")
+    review = 0
+    if df is not None and "Confidence" in df.columns:
+        review = int((df["Confidence"] < thr).sum())
+
+    # Coverage is measured in words, not pages.
+    total_words = int(res.get("total_words") or 0)
+    reliable_words = min(int(res.get("reliable_words") or 0), total_words)
+    coverage = (reliable_words / total_words * 100) if total_words > 0 else 0.0
 
     backend_status = res.get("redaction_status")
 
@@ -570,14 +580,13 @@ def verdict(res, thr):
     if backend_status != "VERIFIED_NO_PII_FOUND":
         return "UNKNOWN", review, coverage
 
-    if res["residual"] > 0:
+    if res.get("residual", 0) > 0:
         return "UNSAFE", review, coverage
 
-    if review > 0 or coverage < 95:
+    if review > 0 or coverage < COVERAGE_REQUIRED_PCT:
         return "UNKNOWN", review, coverage
 
     return "SAFE", review, coverage
-
 
 def render_kpis(items):
     """Render KPI cards cleanly using responsive CSS Grid."""
@@ -904,6 +913,7 @@ elif st.session_state.screen == "findings" and st.session_state.res:
                 optimized_md = optimizer.optimize_output(
                     pii_outputs=pii_outputs,
                     raw_original_text=raw_text,
+                    chunks=raw_chunks,
                 )
                 st.download_button(
                     "⚡ Download LLM Markdown (.md)",

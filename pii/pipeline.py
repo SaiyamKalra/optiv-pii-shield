@@ -1,8 +1,21 @@
+import argparse
+import json
 import logging
+import os
+import re
+from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
+
+# Restrict PyTorch thread thrashing on CPU for faster inference execution
+import torch
+torch.set_num_threads(4)
+os.environ["OMP_NUM_THREADS"] = "4"
+os.environ["MKL_NUM_THREADS"] = "4"
 
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from presidio_analyzer.nlp_engine import NlpEngineProvider
+from pydantic import TypeAdapter
 from sqlalchemy.exc import SQLAlchemyError
 
 from config.settings import (
@@ -19,16 +32,109 @@ from config.settings import (
     ExceptionIdRecognizer,
     RobustPhoneRecognizer,
     StrictSsnRecognizer,
+    # FlexibleNameRecognizer,  # Active: captures multi-ethnic and table names
 )
 from database.db import init_db
 from database.repository import save_pipeline_output
 from models.schemas import DetectedEntityDetail, ExtractionInput, PIIOutput
+from pii.gliner_recognizer import GlinerRecognizer
 from pii.token_manager import TokenManager
 from pii.verifier import VerificationGate
 from redaction.token_redaction.token_optimizer import TokenOptimizer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PIIPipeline")
+
+# Entity priority matrix: structured IDs beat generic ML matches
+ENTITY_PRIORITY = {
+    "EMPLOYEE_ID": 0,
+    "DIRECTOR_ID": 0,
+    "EXCEPTION_ID": 0,
+    "DOCUMENT_REFERENCE": 0,
+    "CREDIT_CARD": 1,
+    "US_SSN": 1,
+    "IP_ADDRESS": 1,
+    "EMAIL_ADDRESS": 1,
+    "PHONE_NUMBER": 2,
+    "PERSON": 3,
+    "ORGANIZATION": 4,
+    "LOCATION": 4,
+}
+
+DEFAULT_ENTITY_PRIORITY = 99
+
+
+@dataclass(frozen=True)
+class _Span:
+    start: int
+    end: int
+    entity_type: str
+    score: float
+    recognizer: str = ""
+
+
+def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """Shrink [start, end) bounds so span does not begin/end with whitespace."""
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def _recognizer_name(result) -> str:
+    """Extract recognizer name from Presidio result metadata."""
+    meta = getattr(result, "recognition_metadata", None) or {}
+    return str(meta.get("recognizer_name", ""))
+
+
+def _min_score_for(span: _Span) -> float:
+    """Determine confidence threshold based on recognizer origin."""
+    recognizer_name = span.recognizer.casefold()
+
+    ner_prefixes = tuple(
+        name.casefold() for name in NER_RECOGNIZER_PREFIXES
+    ) + ("glinerrecognizer", "gliner")
+
+    if recognizer_name.startswith(ner_prefixes):
+        return MIN_NER_SCORE
+
+    return MIN_PATTERN_SCORE
+
+
+def _is_valid_ner_candidate(span_text: str, entity_type: str) -> bool:
+    """Filter out ML false positives like regulatory standards, policy refs, and layout labels."""
+    cleaned = span_text.strip()
+    upper_val = cleaned.upper()
+
+    # 1. Reject standard regulatory frameworks and policy codes
+    REGULATORY_ACRONYMS = {
+        "ISO", "COSO", "BCBS", "NIST", "DORA", "GDPR", "GLBA",
+        "DPDP", "UK DPA", "IIA", "PRA", "RCSA", "BASEL", "SLA", "KPI"
+    }
+    if any(term in upper_val for term in REGULATORY_ACRONYMS):
+        return False
+
+    # Regex check for standard codes like ISO 31000, SP 800-37, SS1/21, GRP-POL-001
+    if re.search(r"\b(?:ISO|NIST|SP|SS|BCBS|GRP-POL|COSO)\b|(?:\d{4,5}:\d{4})", cleaned, re.IGNORECASE):
+        return False
+
+    # 2. Filter PERSON false positives
+    if entity_type == "PERSON":
+        words = cleaned.split()
+        # Single lowercased words are not names
+        if len(words) == 1 and not cleaned.istitle():
+            return False
+        # Reject values containing structural symbols or digits
+        if any(char in ":/\\_{}=" or char.isdigit() for char in cleaned):
+            return False
+
+    # 3. Filter ORGANIZATION false positives (reject legislation/policy document titles)
+    if entity_type == "ORGANIZATION":
+        if any(w in upper_val for w in ["ACT", "POLICY", "FRAMEWORK", "MODEL", "STANDARD", "GUIDELINES", "RESILIENCE"]):
+            return False
+
+    return True
 
 
 class PIIPipeline:
@@ -39,6 +145,7 @@ class PIIPipeline:
         except SQLAlchemyError as e:
             logger.warning(f"Failed to initialize database: {e}")
 
+        # Configure spaCy NLP Engine
         configuration = {
             "nlp_engine_name": "spacy",
             "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
@@ -58,11 +165,11 @@ class PIIPipeline:
         nlp_engine = provider.create_engine()
 
         registry = RecognizerRegistry()
-        registry.load_predefined_recognizers()
+        registry.load_predefined_recognizers(nlp_engine=nlp_engine, languages=["en"])
 
         registry.remove_recognizer("PhoneRecognizer")
 
-        # registry.add_recognizer(InitialNameRecognizer)
+        # Register custom domain-specific pattern recognizers
         registry.add_recognizer(CorpEmailRecognizer)
         registry.add_recognizer(RobustPhoneRecognizer)
         registry.add_recognizer(StrictSsnRecognizer)
@@ -71,9 +178,14 @@ class PIIPipeline:
         registry.add_recognizer(DirectorIdRecognizer)
         registry.add_recognizer(ExceptionIdRecognizer)
         registry.add_recognizer(DocumentReferenceRecognizer)
-        # Registration order does not decide overlaps: ENTITY_PRIORITY does
-        # (EMPLOYEE_ID beats PHONE_NUMBER on the same digits).
-        # registry.add_recognizer(EmployeeIDRecognizer)
+        # registry.add_recognizer(FlexibleNameRecognizer)  # Registered!
+
+        # Register custom GLiNER ML recognizer
+        gliner_recognizer = GlinerRecognizer(
+            model_name="urchade/gliner_medium-v2.1",
+            threshold=0.45,
+        )
+        registry.add_recognizer(gliner_recognizer)
 
         self.analyzer = AnalyzerEngine(
             nlp_engine=nlp_engine, registry=registry
@@ -119,17 +231,16 @@ class PIIPipeline:
         results = self.analyzer.analyze(
             text=raw_text, entities=TARGET_ENTITIES, language="en"
         )
+
+        candidates: list[_Span] = []
         for res in results:
-            print(
+            logger.debug(
                 f"DETECTED: {raw_text[res.start:res.end]!r} "
                 f"| ENTITY: {res.entity_type} "
                 f"| SCORE: {res.score:.2f} "
                 f"| RECOGNIZER: {_recognizer_name(res)}"
             )
-        candidates: list[_Span] = []
-        for res in results:
-            # Trim whitespace out of the span itself, so the offsets, the token
-            # and the recorded original value always describe the same text.
+
             start, end = _trim_span(raw_text, res.start, res.end)
             if start >= end:
                 continue
@@ -146,6 +257,11 @@ class PIIPipeline:
                 continue
 
             val = raw_text[start:end]
+
+            # Structural & domain validation to drop false positives
+            if not _is_valid_ner_candidate(val, res.entity_type):
+                continue
+
             if val.upper() in IGNORED_WORDS or any(
                 w in val.upper()
                 for w in [
@@ -160,14 +276,11 @@ class PIIPipeline:
 
             candidates.append(span)
 
-        # Deduplicate overlapping spans: structured identifiers beat generic
-        # digit-heavy matches (see _remove_overlapping_spans).
-        results = self._remove_overlapping_spans(candidates)
+        filtered_spans = self._remove_overlapping_spans(candidates)
 
         detected_details = []
-        for span in results:
+        for span in filtered_spans:
             original_val = raw_text[span.start : span.end]
-
             token = token_mgr.get_or_create_token(original_val, span.entity_type)
 
             detected_details.append(
@@ -227,16 +340,8 @@ class PIIPipeline:
             outputs.append(out)
         return outputs
 
-    def _remove_overlapping_spans(self, results: list["_Span"]) -> list["_Span"]:
-        """Keep one span per overlapping cluster.
-
-        Ordering is strictly by entity priority first (lower number wins), then
-        by recognizer score, then by span length. The priority rule is what
-        makes a contextual structured identifier (EMPLOYEE_ID, priority 0) beat
-        any generic multi-digit match such as PHONE_NUMBER (priority 2) that
-        fires on the same digits. Score only breaks ties within a priority tier,
-        so a low-confidence structured ID can never lose to a generic regex.
-        """
+    def _remove_overlapping_spans(self, results: list[_Span]) -> list[_Span]:
+        """Keep one span per overlapping cluster."""
         sorted_res = sorted(
             results,
             key=lambda x: (
@@ -256,74 +361,8 @@ class PIIPipeline:
         return sorted(filtered, key=lambda x: x.start)
 
 
-# ── Span helpers ──────────────────────────────────────────────────────────────
-
-# Lower number = higher priority. EMPLOYEE_ID must win over the generic phone /
-# SSN / card regexes that also fire on its digits.
-ENTITY_PRIORITY = {
-    "EMPLOYEE_ID": 0,
-    "DIRECTOR_ID": 0,
-    "EXCEPTION_ID": 0,
-    "DOCUMENT_REFERENCE": 0,
-    "CREDIT_CARD": 1,
-    "US_SSN": 1,
-    "IP_ADDRESS": 1,
-    "EMAIL_ADDRESS": 1,
-    "PHONE_NUMBER": 2,
-    "PERSON": 3,
-    "ORGANIZATION": 4,
-    "LOCATION": 4,
-}
-
-DEFAULT_ENTITY_PRIORITY = 99
-
-
-@dataclass(frozen=True)
-class _Span:
-    start: int
-    end: int
-    entity_type: str
-    score: float
-    recognizer: str = ""
-
-
-def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
-    """Shrink [start, end) so it does not begin or end with whitespace."""
-    while start < end and text[start].isspace():
-        start += 1
-    while end > start and text[end - 1].isspace():
-        end -= 1
-    return start, end
-
-
-def _recognizer_name(result) -> str:
-    """Name of the Presidio recognizer that produced *result*, if reported."""
-    meta = getattr(result, "recognition_metadata", None) or {}
-    return str(meta.get("recognizer_name", ""))
-
-
-def _min_score_for(span: _Span) -> float:
-    """Confidence floor for a span, chosen by where it came from."""
-    recognizer_name = span.recognizer.casefold()
-    ner_prefixes = tuple(
-        name.casefold() for name in NER_RECOGNIZER_PREFIXES
-    )
-
-    if recognizer_name.startswith(ner_prefixes):
-        return MIN_NER_SCORE
-
-    return MIN_PATTERN_SCORE
-
-
 def main():
-    """Run the pipeline on ExtractionInput JSON saved by an extractor (--save-chunks)."""
-    import argparse
-    import json
-    from collections import Counter
-    from pathlib import Path
-
-    from pydantic import TypeAdapter
-
+    """Run pipeline on ExtractionInput JSON saved by an extractor."""
     parser = argparse.ArgumentParser(
         description="Run PII detection on extracted page chunks."
     )
@@ -342,12 +381,12 @@ def main():
     parser.add_argument(
         "--json",
         metavar="FILE",
-        help="Save the raw PIIOutput objects as JSON (includes original values, i.e. PII)",
+        help="Save raw PIIOutput objects as JSON",
     )
     parser.add_argument(
         "--export-md",
         metavar="FILE",
-        help="Save the token-optimized, LLM-ready Markdown document (.md)",
+        help="Save token-optimized, LLM-ready Markdown document (.md)",
     )
     args = parser.parse_args()
 
@@ -377,19 +416,20 @@ def main():
             print("-" * 80)
 
     flagged = [r.page_number for r in results if not r.verification_passed]
+    unique_tokens = len(results[-1].mapping_ledger) if results else 0
+
     print(
         f"\nTotal findings: {sum(totals.values())} "
         f"({', '.join(f'{t} {n}' for t, n in totals.most_common())})"
     )
-    print(f"Unique tokens: {len(results[-1].mapping_ledger) if results else 0}")
+    print(f"Unique tokens: {unique_tokens}")
     print(f"Pages flagged by verifier: {flagged or 'none'}")
 
-    # Process Token Optimizer downstream export if flag is provided
     if args.export_md:
         raw_full_text = "\n".join([c.raw_text for c in chunks if c.raw_text])
         optimizer = TokenOptimizer()
         optimized_md = optimizer.optimize_output(
-            pii_outputs=results, raw_original_text=raw_full_text
+            pii_outputs=results, raw_original_text=raw_full_text, chunks=chunks
         )
         metrics = optimizer.calculate_metrics(raw_full_text, optimized_md)
 

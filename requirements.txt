@@ -3,6 +3,7 @@ presidio-analyzer==2.2.35
 presidio-anonymizer==2.2.35
 spacy>=3.8.0
 pydantic>=2.9.0
+gliner>=0.2.0
 
 # analytics and database
 pandas
@@ -12,6 +13,7 @@ psycopg2-binary
 # UI (app.py)
 streamlit
 plotly
+torchvision
 
 # PDF extraction + OCR (also requires the Tesseract binary, installed separately)
 PyMuPDF>=1.24.0
