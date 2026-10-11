@@ -1,3 +1,4 @@
+
 import pymupdf
 
 from models.schemas import ExtractionInput
@@ -14,6 +15,7 @@ def test_pipeline_blocks_when_extraction_page_is_missing(tmp_path):
     doc.save(str(input_pdf))
     doc.close()
 
+    # Deliberately omit page 2.
     chunks = [
         ExtractionInput(
             file_id="test",
@@ -31,11 +33,7 @@ def test_pipeline_blocks_when_extraction_page_is_missing(tmp_path):
 
     output_pdf = tmp_path / "sanitized.pdf"
 
-    pipeline = RedactionPipeline()
-
-    pipeline._extract_with_retry = lambda path: chunks
-
-    result = pipeline.process(
+    result = RedactionPipeline().process(
         input_pdf=str(input_pdf),
         output_pdf=str(output_pdf),
         chunks=chunks,
