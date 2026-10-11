@@ -9,6 +9,7 @@ from pathlib import Path
 
 # Restrict PyTorch thread thrashing on CPU for faster inference execution
 import torch
+
 torch.set_num_threads(4)
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["MKL_NUM_THREADS"] = "4"
@@ -122,20 +123,19 @@ def _is_valid_ner_candidate(span_text: str, entity_type: str) -> bool:
     # 2. Filter PERSON false positives
     if entity_type == "PERSON":
         words = cleaned.split()
-        # Single lowercased words are not names
         if len(words) == 1 and not cleaned.istitle():
             return False
-        # Reject values containing structural symbols or digits
         if any(char in ":/\\_{}=" or char.isdigit() for char in cleaned):
             return False
 
     # 3. Filter ORGANIZATION false positives (reject legislation/policy document titles)
-    if entity_type == "ORGANIZATION":
-        if any(w in upper_val for w in ["ACT", "POLICY", "FRAMEWORK", "MODEL", "STANDARD", "GUIDELINES", "RESILIENCE"]):
-            return False
-
-    return True
-
+    return not (
+        entity_type == "ORGANIZATION"
+        and any(
+            w in upper_val
+            for w in ["ACT", "POLICY", "FRAMEWORK", "MODEL", "STANDARD", "GUIDELINES", "RESILIENCE"]
+        )
+    )
 
 class PIIPipeline:
 
