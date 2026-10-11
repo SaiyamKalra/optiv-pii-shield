@@ -18,7 +18,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from statistics import median
 from typing import Any
 
@@ -150,7 +150,7 @@ class TokenOptimizer:
                 "---\n"
                 f"title: {_yaml_scalar(first_doc.file_name)}\n"
                 f"file_id: {_yaml_scalar(first_doc.file_id)}\n"
-                f"processed_at: {datetime.now(timezone.utc).isoformat()}\n"
+                f"processed_at: {datetime.now(UTC).isoformat()}\n"
                 f"total_pages: {len(pii_outputs)}\n"
                 f"estimated_tokens_saved: {metrics['tokens_saved']} "
                 f"({metrics['savings_percentage']}%)\n"
