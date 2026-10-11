@@ -1,5 +1,4 @@
 import logging
-import re
 from typing import Any
 
 from gliner import GLiNER
@@ -17,9 +16,11 @@ class GlinerRecognizer(EntityRecognizer):
         threshold: float = 0.40,
     ):
         self.label_mapping = {
+            "person": "PERSON",
             "person name": "PERSON",
             "full name": "PERSON",
             "individual name": "PERSON",
+            "executive name": "PERSON",
             "organization": "ORGANIZATION",
             "location": "LOCATION",
         }
@@ -59,9 +60,6 @@ class GlinerRecognizer(EntityRecognizer):
         if not text or not text.strip():
             return results
 
-        if not re.search(r"\b[A-Z][A-Za-z'.-]*\b", text):
-            return results
-
         try:
             predictions = self.model.predict_entities(
                 text,
@@ -75,15 +73,32 @@ class GlinerRecognizer(EntityRecognizer):
                 if entities and target_entity not in entities:
                     continue
 
+                start = int(pred["start"])
+                end = int(pred["end"])
+
+                # Trim trailing/leading punctuation from predicted span bounds
+                span_text = text[start:end]
+                while span_text and span_text[-1] in ".,;:!?()[]{}'\"":
+                    end -= 1
+                    span_text = text[start:end]
+
+                while span_text and span_text[0] in ".,;:!?()[]{}'\"":
+                    start += 1
+                    span_text = text[start:end]
+
+                if start >= end:
+                    continue
+
                 results.append(
                     RecognizerResult(
                         entity_type=target_entity,
-                        start=int(pred["start"]),
-                        end=int(pred["end"]),
+                        start=start,
+                        end=end,
                         score=float(pred["score"]),
                         recognition_metadata={"recognizer_name": self.name},
                     )
                 )
         except (RuntimeError, ValueError, TypeError, KeyError) as err:
             logger.error(f"GLiNER prediction failed: {err}")
+
         return results

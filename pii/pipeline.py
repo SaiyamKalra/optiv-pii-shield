@@ -25,6 +25,7 @@ from config.settings import (
     MIN_PATTERN_SCORE,
     NER_RECOGNIZER_PREFIXES,
     TARGET_ENTITIES,
+    ContextualNameRecognizer,
     CorpCreditCardRecognizer,
     CorpEmailRecognizer,
     DirectorIdRecognizer,
@@ -33,7 +34,6 @@ from config.settings import (
     ExceptionIdRecognizer,
     RobustPhoneRecognizer,
     StrictSsnRecognizer,
-    # FlexibleNameRecognizer,  # Active: captures multi-ethnic and table names
 )
 from database.db import init_db
 from database.repository import save_pipeline_output
@@ -108,6 +108,10 @@ def _is_valid_ner_candidate(span_text: str, entity_type: str) -> bool:
     cleaned = span_text.strip()
     upper_val = cleaned.upper()
 
+    # Always allow explicitly targeted document references
+    if entity_type == "DOCUMENT_REFERENCE":
+        return True
+
     # 1. Reject standard regulatory frameworks and policy codes
     REGULATORY_ACRONYMS = {
         "ISO", "COSO", "BCBS", "NIST", "DORA", "GDPR", "GLBA",
@@ -116,19 +120,18 @@ def _is_valid_ner_candidate(span_text: str, entity_type: str) -> bool:
     if any(term in upper_val for term in REGULATORY_ACRONYMS):
         return False
 
-    # Regex check for standard codes like ISO 31000, SP 800-37, SS1/21, GRP-POL-001
-    if re.search(r"\b(?:ISO|NIST|SP|SS|BCBS|GRP-POL|COSO)\b|(?:\d{4,5}:\d{4})", cleaned, re.IGNORECASE):
+    # Regex check for standard codes like ISO 31000, SP 800-37, SS1/21 (GRP-POL excluded)
+    if re.search(r"\b(?:ISO|NIST|SP|SS|BCBS|COSO)\b|(?:\d{4,5}:\d{4})", cleaned, re.IGNORECASE):
         return False
 
-    # 2. Filter PERSON false positives
+    # 2. Filter PERSON false positives (allow Title Case, ALL-CAPS, and initials)
     if entity_type == "PERSON":
-        words = cleaned.split()
-        if len(words) == 1 and not cleaned.istitle():
+        if cleaned.islower():
             return False
         if any(char in ":/\\_{}=" or char.isdigit() for char in cleaned):
             return False
 
-    # 3. Filter ORGANIZATION false positives (reject legislation/policy document titles)
+    # 3. Filter ORGANIZATION false positives
     return not (
         entity_type == "ORGANIZATION"
         and any(
@@ -136,6 +139,7 @@ def _is_valid_ner_candidate(span_text: str, entity_type: str) -> bool:
             for w in ["ACT", "POLICY", "FRAMEWORK", "MODEL", "STANDARD", "GUIDELINES", "RESILIENCE"]
         )
     )
+
 
 class PIIPipeline:
 
@@ -145,21 +149,29 @@ class PIIPipeline:
         except SQLAlchemyError as e:
             logger.warning(f"Failed to initialize database: {e}")
 
-        # Configure spaCy NLP Engine
+        # Configure spaCy NLP Engine with properly nested configuration structure
         configuration = {
             "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
-            "ner_model_configuration": {
-                "labels_to_ignore": [
-                    "CARDINAL",
-                    "ORDINAL",
-                    "QUANTITY",
-                    "WORK_OF_ART",
-                    "PERCENT",
-                    "MONEY",
-                    "FAC",
-                ]
-            },
+            "models": [
+                {
+                    "lang_code": "en",
+                    "model_name": "en_core_web_lg",
+                    "ner_model_configuration": {
+                        "labels_to_ignore": [
+                            "CARDINAL",
+                            "ORDINAL",
+                            "QUANTITY",
+                            "WORK_OF_ART",
+                            "PERCENT",
+                            "MONEY",
+                            "FAC",
+                            "LAW",
+                            "EVENT",
+                            "PRODUCT",
+                        ]
+                    },
+                }
+            ],
         }
         provider = NlpEngineProvider(nlp_configuration=configuration)
         nlp_engine = provider.create_engine()
@@ -169,7 +181,7 @@ class PIIPipeline:
 
         registry.remove_recognizer("PhoneRecognizer")
 
-        # Register custom domain-specific pattern recognizers
+        # Register custom domain-specific pattern recognizers WITH INSTANTIATION ()
         registry.add_recognizer(CorpEmailRecognizer)
         registry.add_recognizer(RobustPhoneRecognizer)
         registry.add_recognizer(StrictSsnRecognizer)
@@ -178,12 +190,12 @@ class PIIPipeline:
         registry.add_recognizer(DirectorIdRecognizer)
         registry.add_recognizer(ExceptionIdRecognizer)
         registry.add_recognizer(DocumentReferenceRecognizer)
-        # registry.add_recognizer(FlexibleNameRecognizer)  # Registered!
+        registry.add_recognizer(ContextualNameRecognizer())
 
         # Register custom GLiNER ML recognizer
         gliner_recognizer = GlinerRecognizer(
             model_name="urchade/gliner_medium-v2.1",
-            threshold=0.45,
+            threshold=0.42,
         )
         registry.add_recognizer(gliner_recognizer)
 

@@ -99,7 +99,31 @@ def evaluate(docs_dir: Path, ground_truth: Path) -> list[dict]:
             reports.append({"file": name, "skipped": "file not found"})
     return reports
 
+def evaluate_accuracy(ground_truth_entities: list, detected_entities: list) -> dict:
+    """
+    ground_truth_entities: [(start, end, entity_type), ...]
+    detected_entities: [(start, end, entity_type), ...]
+    """
+    gt_set = set(ground_truth_entities)
+    pred_set = set(detected_entities)
 
+    true_positives = len(gt_set & pred_set)
+    false_positives = len(pred_set - gt_set)
+    false_negatives = len(gt_set - pred_set)
+
+    precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.0
+    recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0.0
+    f1_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+
+    return {
+        "true_positives (correct)": true_positives,
+        "false_positives (over-redacted)": false_positives,
+        "false_negatives (missed PII)": false_negatives,
+        "precision_pct": round(precision * 100, 2),
+        "recall_pct": round(recall * 100, 2),
+        "f1_score_pct": round(f1_score * 100, 2),
+    }
+    
 def main():
     parser = argparse.ArgumentParser(description="Measure extraction quality on known documents.")
     parser.add_argument("docs_dir", nargs="?", default=str(DEFAULT_DOCS_DIR))
@@ -120,3 +144,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

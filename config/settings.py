@@ -1,48 +1,11 @@
+"""Recognizers and Settings Configuration for PII Detection Pipeline."""
+
+
 from presidio_analyzer import Pattern, PatternRecognizer
 
-# Person names with initials and hyphenated names
-INITIAL_NAME_PATTERN = Pattern(
-    name="initial_name_pattern",
-    regex=(
-        r"\b[A-Z][a-z]{1,30}(?:-[A-Z][a-z]{1,30})*"
-        r"\s+[A-Z][a-z]{1,30}(?:-[A-Z][a-z]{1,30})*\b"
-        r"|"
-        r"\b[A-Z][a-z]{1,30}(?:-[A-Z][a-z]{1,30})*"
-        r"\s+[A-Z]\.?\s+[A-Z][a-z]{1,30}\b"
-        r"|"
-        r"\b[A-Z]\.?\s*(?:[A-Z]\.?\s*)?"
-        r"[A-Z][a-z]{1,30}\b"
-    ),
-    score=0.85,
-)
-
-InitialNameRecognizer = PatternRecognizer(
-    supported_entity="PERSON",
-    patterns=[INITIAL_NAME_PATTERN],
-    name="InitialNameRecognizer",
-)
-
-# Flexible name pattern for complex full names in tabular formats
-# (Handles middle initials, hyphenated surnames, and board role suffixes)
-FLEXIBLE_NAME_PATTERN = Pattern(
-    name="flexible_name_pattern",
-    regex=(
-        r"\b[A-Z][a-z]{1,30}"
-        r"(?:\s+[A-Z]\.?)?"
-        r"\s+[A-Z][a-z]{1,30}"
-        r"(?:-[A-Z][a-z]{1,30})?"
-        r"(?:\s*\((?:NED|CRO|CISO|CCO|CFO|Chair)\))?\b"
-    ),
-    score=0.85,
-)
-
-FlexibleNameRecognizer = PatternRecognizer(
-    supported_entity="PERSON",
-    patterns=[FLEXIBLE_NAME_PATTERN],
-    name="FlexibleNameRecognizer",
-    context=["chair", "member", "appointed", "contact", "executive", "director", 
-        "head", "relationship owner", "deputy", "owner", "regulator", "lead"],
-)
+# =============================================================================
+# RECOGNIZER PATTERNS & INSTANCES
+# =============================================================================
 
 # Corporate email addresses
 CORP_EMAIL_PATTERN = Pattern(
@@ -57,7 +20,7 @@ CorpEmailRecognizer = PatternRecognizer(
     name="CorpEmailRecognizer",
 )
 
-# Phone numbers with optional country code, area code, and extension
+# Phone numbers with optional country code, area code, extension, and multiline table support
 ROBUST_PHONE_PATTERN = Pattern(
     name="robust_phone_pattern",
     regex=(
@@ -65,13 +28,13 @@ ROBUST_PHONE_PATTERN = Pattern(
         r"(?<![A-Za-z0-9])"
         r"(?!\d{4}[\s.-]\d{4}[\s.-]\d{4}[\s.-]\d{4}(?!\d))"
         r"(?:"
-        r"\+\d{1,3}[\s.-]?"
-        r"|(?:\(\+\d{1,3}\)\s?)"
+        r"\+\d{1,3}[\s\n.-]?"
+        r"|(?:\(\+\d{1,3}\)[\s\n]?)"
         r")?"
         r"(?:\(\d{2,4}\)|\d{2,4})"
-        r"[\s.-]?"
+        r"[\s\n.-]+"  # Match spaces OR newlines between lines in tables
         r"\d{3,4}"
-        r"[\s.-]?"
+        r"[\s\n.-]?"
         r"\d{3,5}"
         r"(?:\s*(?:ext\.?|x)\s*\d{1,5})?"
         r"(?![A-Za-z0-9])"
@@ -110,6 +73,49 @@ CorpCreditCardRecognizer = PatternRecognizer(
     patterns=[CORP_CREDIT_CARD_PATTERN],
     name="CorpCreditCardRecognizer",
 )
+
+
+class ContextualNameRecognizer(PatternRecognizer):
+    """Matches full names, all-caps names, and initialisms when near role context words."""
+
+    def __init__(self) -> None:
+        name_patterns = [
+            # Two or three capitalized/uppercase words (e.g., "Desmond N. Quarshie", "Mireille Dubois-Kane")
+            Pattern(
+                name="full_name_context",
+                regex=r"\b[A-Z][a-zA-Z'-]+\s+(?:[A-Z]\.\s+)?[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?\b",
+                score=0.75,
+            ),
+            # Single surname with initial (e.g., "D. Quarshie", "M. Dubois")
+            Pattern(
+                name="initial_surname_context",
+                regex=r"\b[A-Z]\.\s+[A-Z][a-zA-Z'-]+\b",
+                score=0.70,
+            ),
+        ]
+
+        context_terms = [
+            "relationship owner",
+            "owner",
+            "deputy",
+            "contact",
+            "lead",
+            "head",
+            "director",
+            "manager",
+            "approved by",
+            "sign-off",
+            "chair",  # Added for table headers like "CHAIR"
+            "chair contact",  # Added for table headers like "CHAIR CONTACT"
+        ]
+
+        super().__init__(
+            supported_entity="PERSON",
+            patterns=name_patterns,
+            name="ContextualNameRecognizer",
+            context=context_terms,
+        )
+
 
 # Organization-specific identifiers
 EmployeeIdRecognizer = PatternRecognizer(
@@ -164,8 +170,11 @@ DocumentReferenceRecognizer = PatternRecognizer(
     context=["policy reference", "document reference", "policy id"],
 )
 
-# Entities used during detection
-TARGET_ENTITIES = [
+# =============================================================================
+# PIPELINE CONFIGURATION & TARGET ENTITIES
+# =============================================================================
+
+TARGET_ENTITIES: list[str] = [
     "PERSON",
     "EMAIL_ADDRESS",
     "PHONE_NUMBER",
@@ -180,7 +189,7 @@ TARGET_ENTITIES = [
     "DOCUMENT_REFERENCE",
 ]
 
-IGNORED_WORDS = {
+IGNORED_WORDS: set[str] = {
     "RACI",
     "SWOT",
     "KPI",
@@ -202,13 +211,28 @@ IGNORED_WORDS = {
     "COMPLIANCE SIGN-OFF",
     "ROSTER APPENDIX",
     "SLA & KPI",
-    "ISO", "COSO", "BCBS", "NIST", "DORA", "GDPR", "GLBA", "DPDP", 
-    "UK DPA", "IIA", "PRA", "RCSA", "BASEL", "ORX", "NIST CSF",
-    "ENTERPRISE RISK MANAGEMENT", "RISK DATA AGGREGATION",
-    "OPERATIONAL RESILIENCE", "DIGITAL OPERATIONAL RESILIENCE ACT",
+    "ISO",
+    "COSO",
+    "BCBS",
+    "NIST",
+    "DORA",
+    "GDPR",
+    "GLBA",
+    "DPDP",
+    "UK DPA",
+    "IIA",
+    "PRA",
+    "RCSA",
+    "BASEL",
+    "ORX",
+    "NIST CSF",
+    "ENTERPRISE RISK MANAGEMENT",
+    "RISK DATA AGGREGATION",
+    "OPERATIONAL RESILIENCE",
+    "DIGITAL OPERATIONAL RESILIENCE ACT",
 }
 
-HIGH_RISK_VERIFICATION_ENTITIES = [
+HIGH_RISK_VERIFICATION_ENTITIES: list[str] = [
     "EMAIL_ADDRESS",
     "PHONE_NUMBER",
     "US_SSN",
@@ -220,11 +244,11 @@ HIGH_RISK_VERIFICATION_ENTITIES = [
     "IP_ADDRESS",
 ]
 
-# Optimal NER threshold for ML models (GLiNER & spaCy)
-MIN_NER_SCORE = 0.60  
-
-# Strict pattern threshold for deterministic regex recognizers
-MIN_PATTERN_SCORE = 0.85  
-
-# Added GlinerRecognizer so _min_score_for() routes GLiNER spans correctly
-NER_RECOGNIZER_PREFIXES = ("SpacyRecognizer", "GlinerRecognizer", "gliner")
+# Score Thresholds
+MIN_NER_SCORE: float = 0.60
+MIN_PATTERN_SCORE: float = 0.85
+NER_RECOGNIZER_PREFIXES: tuple[str, ...] = (
+    "SpacyRecognizer",
+    "GlinerRecognizer",
+    "gliner",
+)
