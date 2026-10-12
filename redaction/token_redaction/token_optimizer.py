@@ -13,6 +13,13 @@ from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from models.schemas import PIIOutput
+from redaction.token_redaction.markdown_tables import (
+    find_table_regions,
+    page_lines,
+    pipe_rows_to_markdown,
+    region_to_markdown,
+    sanitize_range,
+)
 
 
 class TokenOptimizer:
@@ -184,13 +191,12 @@ class TokenOptimizer:
             if getattr(first_page, "file_id", None):
                 file_id = first_page.file_id
 
+        chunk_by_page = {c.page_number: c for c in chunks or []}
         for p_idx, page in enumerate(pii_outputs, start=1):
-            text = page.sanitized_text or ""
-            if not text.strip() and chunks and len(chunks) >= p_idx:
-                text = chunks[p_idx - 1].raw_text or ""
-
-            clean_p_text = self._strip_boilerplate(text)
-            clean_p_text = self._clean_text(clean_p_text)
+            chunk = chunk_by_page.get(page.page_number)
+            # An empty sanitized page stays empty: never fall back to the raw text,
+            # which still contains the PII.
+            clean_p_text = self._page_markdown(page, chunk)
 
             formatted_page = f"<!-- Page {p_idx} -->\n{clean_p_text}"
             markdown_pages.append(formatted_page)
@@ -203,7 +209,77 @@ class TokenOptimizer:
         )
 
         header = "\n".join(header_lines) + "\n\n"
-        return header + "\n\n---\n\n".join(markdown_pages)
+        body = self._mask_known_values("\n\n---\n\n".join(markdown_pages), pii_outputs)
+        return header + body
+
+    @staticmethod
+    def _mask_known_values(markdown: str, pii_outputs: list[PIIOutput]) -> str:
+        """Replace any value detected anywhere in the document with its token.
+
+        Detection works per occurrence, so an occurrence it missed (e.g. a phone number
+        wrapped over two lines of a table cell, which the table rebuild joins again)
+        would otherwise stay readable. Whitespace inside a value may differ, and a value
+        made of digits (phone numbers, IDs with 7+ digits) matches on its digits alone,
+        since OCR places the spaces differently ("+33 15555 0144" / "+33 1 5555 0144")."""
+        tokens: dict[str, str] = {}
+        for page in pii_outputs:
+            for e in page.detected_entities:
+                value = " ".join((e.original_value or "").split())
+                if len(value) >= 4:
+                    tokens.setdefault(value, e.token)
+        for value in sorted(tokens, key=len, reverse=True):
+            digits = re.sub(r"\D", "", value)
+            if len(digits) >= 7 and not re.search(r"[A-Za-z]", value):
+                pattern = r"(?<![\w+])\+?" + r"[\s().+\-]*".join(digits) + r"(?!\d)"
+            else:
+                pattern = r"(?<!\w)" + r"\s+".join(map(re.escape, value.split())) + r"(?!\w)"
+            markdown = re.sub(pattern, lambda _match, t=tokens[value]: t, markdown)
+        return markdown
+
+    def _clean_block(self, text: str) -> str:
+        return self._clean_text(self._strip_boilerplate(text))
+
+    def _page_markdown(self, page: PIIOutput, chunk) -> str:
+        """One page as Markdown, with tables kept as tables.
+
+        Scanned/positioned pages (word boxes in page points): tables are rebuilt from
+        the word layout and every cell is built from the detected values' tokens.
+        Pages without positions (DOCX/PPTX): "a | b" row runs become tables.
+        """
+        parts: list[str] = []
+
+        def add_text(sanitized: str):
+            for kind, content in pipe_rows_to_markdown(sanitized):
+                parts.append(content if kind == "table" else self._clean_block(content))
+
+        sanitized_page = page.sanitized_text or ""
+        positioned = chunk is not None and any(
+            b.coord_space == "page_pt" and b.char_start is not None
+            for b in chunk.bounding_boxes or []
+        )
+        if not positioned:
+            add_text(sanitized_page)
+            return "\n\n".join(p for p in parts if p.strip())
+
+        raw = chunk.raw_text or ""
+        findings = page.detected_entities
+        emitted: set = set()
+        line_starts = [0] + [i + 1 for i, ch in enumerate(raw) if ch == "\n"]
+        pos = 0
+        for region in find_table_regions(page_lines(chunk)):
+            start = line_starts[region.lines[0].index]
+            last = region.lines[-1].index
+            end = line_starts[last + 1] - 1 if last + 1 < len(line_starts) else len(raw)
+            add_text(sanitize_range(raw, findings, pos, start, emitted))
+            parts.append(region_to_markdown(region, raw, findings, emitted))
+            pos = end
+        add_text(sanitize_range(raw, findings, pos, len(raw), emitted))
+        # Detection may have scanned text after the page text (hidden content such as
+        # notes or metadata); its sanitized form is what follows the page's own part.
+        page_part = sanitize_range(raw, findings, 0, len(raw), set())
+        if len(sanitized_page) > len(page_part):
+            add_text(sanitized_page[len(page_part) :])
+        return "\n\n".join(p for p in parts if p.strip())
 
     def _strip_boilerplate(self, text: str) -> str:
         """Removes headers, footers, page numbering, and confidentiality notices."""
@@ -218,7 +294,9 @@ class TokenOptimizer:
 
     def _clean_text(self, text: str) -> str:
         """Fixes token spacing, hyphenated line wraps, and extra linebreaks."""
-        text = re.sub(r"(\w+)-\s*(\w+)", r"\1\2", text)
+        # Only re-join words hyphenated across a line break ("infor-\nmation"); a hyphen
+        # inside a line belongs to the word ("RSK-4502", "Okonkwo-Bryce").
+        text = re.sub(r"(\w)-[ \t]*\n[ \t]*(\w)", r"\1\2", text)
         text = re.sub(r"\[\s+([A-Z_]+_\d+)\s+\]", r"[\1]", text)
         text = re.sub(r"(\[[A-Z_]+_\d+\])\s+([.,;:!])", r"\1\2", text)
         text = re.sub(r"[ \t]+", " ", text)
