@@ -366,7 +366,7 @@ ENTITY_TYPES = [
 WEIGHTS = [28, 20, 18, 10, 8, 5, 6, 5]
 SOURCES = ["body", "table", "image/OCR", "narrative"]
 DETECTORS = {
-    "PERSON": "spaCy NER / GLiNER",
+    "PERSON": "spaCy NER + name filter",
     "EMAIL ADDRESS": "CorpEmail recognizer",
     "PHONE NUMBER": "RobustPhone recognizer",
     "US SSN": "StrictSSN recognizer",
@@ -374,6 +374,20 @@ DETECTORS = {
     "IP ADDRESS": "Presidio regex",
     "LOCATION": "spaCy NER",
     "ORGANIZATION": "spaCy NER",
+    # Entity names as the pipeline emits them (with underscores).
+    "EMAIL_ADDRESS": "CorpEmail recognizer",
+    "PHONE_NUMBER": "RobustPhone recognizer",
+    "US_SSN": "StrictSSN recognizer",
+    "CREDIT_CARD": "CorpCreditCard recognizer",
+    "IP_ADDRESS": "Presidio regex",
+    "EMPLOYEE_ID": "EmployeeId recognizer",
+    "DIRECTOR_ID": "DirectorId recognizer",
+    "VENDOR_ID": "VendorId recognizer",
+    "PASSPORT": "Passport recognizer (needs 'passport' label)",
+    "PAN": "PAN recognizer",
+    "NATIONAL_ID": "NationalId recognizer (needs PESEL/Aadhaar label)",
+    "DATE_OF_BIRTH": "DateOfBirth recognizer (needs DOB label)",
+    "STREET_ADDRESS": "StreetAddress recognizer",
 }
 
 

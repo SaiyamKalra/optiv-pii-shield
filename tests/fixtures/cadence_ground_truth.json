@@ -50,6 +50,29 @@
         [25, ["Rohan S. Deshmukh", "MER-IN-4471", "AQBPR7741L", "+91 98452 55011"]],
         [28, ["Hiroshi Yamagata", "EMP-41310"]],
         [32, ["Miriam T. Achebe", "EMP-38104", "m.achebe@cadencefg.com"]]
+      ],
+      "_people_note": "Hand-checked first names, surnames and home-address words of the (synthetic) people in this file. A PERSON/address finding is a true positive only if it contains one of these words.",
+      "people": [
+        "Achebe", "Achterberg", "Adaeze", "Adeyemi", "Aiko", "Ananya", "Anthony", "Arvind", "Babatunde", "Balakrishnan",
+        "Balogun", "Beatrix", "Bienvenido", "Brannstrom", "Brightwell", "Caleb", "Chatterjee", "Delphine", "Denis", "Desmond",
+        "Deshmukh", "Devansh", "Duarte", "Dubois-Kane", "Eleanor", "Elena", "Fatima", "Fumiko", "Grazyna", "Harriet",
+        "Helena", "Hiroshi", "Ifeoma", "Karsten", "Kowalczyk", "Kulkarni", "Lars-Erik", "Lindenau", "Lindqvist", "Marchetti-Lang",
+        "Marta", "Miriam", "Mireille", "Nakagawa", "Nakamura-Reed", "Naomi", "Nathaniel", "Ohlendorf", "Okafor", "Okonjo",
+        "Okonkwo-Bryce", "Onwuka", "Osadebe", "Osei-Tutu", "Petrovska", "Pillai", "Priyanka", "Quarshie", "Qureshi", "Rafael",
+        "Raghavan", "Rohan", "Rosalind", "Salcedo", "Sneha", "Sofia", "Sorokina", "Sunita", "Szewczyk", "Tobias",
+        "Twilley", "Vaidyanathan", "Vasquez-Holt", "Vorstermann", "Whitfield", "Wieczorek", "Yamagata", "Yevgeni", "Yusuf",
+        "Aditya", "Lawand", "Szewezyk", "Arjun", "Menta", "Ashby", "Emilio", "Ramos-Vega", "Gregor", "Halvorsen",
+        "Amanda", "Jessica", "John", "Serah", "Robert", "Emily", "Laura", "Deniel", "Davis", "Martinez",
+        "Wilson", "Mitchell", "Kim", "Johnson", "White", "Chen", "Brown", "Singh",
+        "Willowbank", "Ashwood", "Palmetto", "Hoboken", "Jersey", "Coral", "Gables"
+      ],
+      "full_names": [
+        "Miriam T. Achebe", "Tobias Lindqvist", "Naomi K. Osadebe", "Fumiko L. Nakagawa", "Caleb A. Whitfield",
+        "Sofia Marchetti-Lang", "Harriet L. Okafor", "Arvind K. Pillai", "Lars-Erik Brannstrom", "Devansh R. Kulkarni",
+        "Delphine R. Okonjo", "Aiko Nakamura-Reed", "Yevgeni A. Sorokina", "Babatunde O. Osei-Tutu", "Beatrix S. Lindenau",
+        "Rafael E. Duarte", "Fatima Z. Qureshi", "Yusuf O. Balogun", "Anthony P. Brightwell", "Rosalind M. Achterberg",
+        "Priyanka S. Raghavan", "Ananya V. Chatterjee", "Hiroshi Yamagata", "Nathaniel Okonkwo-Bryce", "Helena Vorstermann",
+        "Grazyna Wieczorek", "Elena Petrovska", "Karsten Ohlendorf", "Eleanor R. Vasquez-Holt", "Desmond N. Quarshie"
       ]
     },
     "Cadence_Financial_Group_Organizational_Pack.pptx": {
@@ -64,11 +87,36 @@
         [8, ["Marguerite Vossberg", "Chief Executive Officer", "m.vossberg@cadencefg.example", "+1 (555) 0114"]],
         [8, ["Solveig Aarnio", "Director, Third-Party Risk", "s.aarnio@cadencefg.example"]],
         [6, ["AI use-case intake and approval", "I", "R", "A"]]
+      ],
+      "_people_note": "Hand-checked from the detector's output and the uncovered capitalised runs; synthetic names.",
+      "people": [
+        "Tobias", "Lindqvist", "Adaeze", "Okonkwo-Bell", "Marguerite", "Vossberg", "Desmond", "Achterberg", "Priyanka",
+        "Raghunathan", "Rosalind", "Featherstone", "Divisha", "Kilari", "Bartholomew", "Nkemdirim", "Yasmin", "El-Katib",
+        "Emiliano", "Bertucci", "Colette", "Marchetti", "Hyun-Woo", "Park", "Nikolai", "Brandvold", "Solveig", "Aarnio",
+        "Rafael", "Quintanilla", "Imani", "Oduya", "Gerhardt", "Wenzel"
+      ],
+      "full_names": [
+        "Tobias Lindqvist", "Adaeze Okonkwo-Bell", "Marguerite Vossberg", "Desmond Achterberg", "Priyanka Raghunathan",
+        "Rosalind Featherstone", "Divisha Kilari", "Bartholomew Nkemdirim", "Yasmin El-Katib", "Emiliano Bertucci",
+        "Colette Marchetti", "Hyun-Woo Park", "Nikolai Brandvold", "Solveig Aarnio", "Rafael Quintanilla",
+        "Imani Oduya", "Gerhardt Wenzel"
       ]
     },
     "Cadence_TPRM_Training.docx": {
       "text": ["Vendor Risk Management Group", "Save attribute", "Vendor workflows", "Add user group", "Copy logic to additional questions"],
-      "min_images_ocr": 35
+      "min_images_ocr": 35,
+      "_people_note": "Hand-checked. 'Mark Read' is a row in a login-history screenshot, probably a user name (ambiguous).",
+      "people": [
+        "Siddharth", "Gaikwad", "Daniela", "Figueroa", "Tamika", "Oliver", "Shimane", "Smith", "Chris", "Schmitz", "Dayo",
+        "Seton", "Madhav", "Mehta", "Divisha", "Kilari", "Bridgett", "Gatewood", "Jyoti", "Karwal", "Ott", "Rob", "Tilney",
+        "Jonathan", "Szeto", "Marc", "Otani", "Melisa", "Cardozo", "Erik", "Hansen", "Skylar", "Damiano", "Srinivas",
+        "Teppa", "Nikhil", "Karkera", "Mark", "Read"
+      ],
+      "full_names": [
+        "Siddharth Gaikwad", "Daniela Figueroa", "Tamika Oliver", "Shimane Smith", "Chris Schmitz", "Dayo Seton",
+        "Madhav Mehta", "Divisha Kilari", "Bridgett Gatewood", "Jyoti Karwal", "Chris Ott", "Rob Tilney", "Jonathan Szeto",
+        "Marc Otani", "Melisa Cardozo", "Erik Hansen", "Skylar Damiano", "Srinivas Teppa", "Nikhil Karkera", "Mark Read"
+      ]
     }
   }
 }
