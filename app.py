@@ -25,9 +25,11 @@ from analytics.metrics import (
     fetch_recent_pass_rates,
     get_conversion_matrix,
 )
+from extraction.normalizer import extract_document
 from extraction.pdf_extractor import extract_pdf
 from models.schemas import PIIOutput
 from pii.pipeline import PIIPipeline
+from redaction.office_pipeline import OfficeRedactionPipeline, scan_chunks
 from redaction.pipeline import RedactionPipeline
 from redaction.token_redaction.token_optimizer import TokenOptimizer
 
@@ -320,7 +322,7 @@ ENTITY_TYPES = [
 WEIGHTS = [28, 20, 18, 10, 8, 5, 6, 5]
 SOURCES = ["body", "table", "image/OCR", "narrative"]
 DETECTORS = {
-    "PERSON": "spaCy NER / GLiNER",
+    "PERSON": "spaCy NER",
     "EMAIL_ADDRESS": "CorpEmail recognizer",
     "PHONE_NUMBER": "RobustPhone recognizer",
     "US_SSN": "StrictSSN recognizer",
@@ -373,32 +375,51 @@ def _demo_pipeline(filename: str = "Cadence_Risk_Policy_v6.pdf", pages: int = 12
     }
 
 
+SUPPORTED_EXTENSIONS = ("pdf", "docx", "pptx")
+OUTPUT_MIME = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+
 def _run_real_pipeline(uploaded) -> dict:
-    """Run actual PDF extraction, PII detection, redaction and verification."""
-    if not uploaded.name.lower().endswith(".pdf"):
-        raise ValueError("Verified redaction currently supports PDF files only.")
+    """Run extraction, PII detection, redaction and verification (PDF, DOCX, PPTX)."""
+    ext = uploaded.name.lower().rsplit(".", 1)[-1]
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise ValueError("Supported file types are PDF, DOCX and PPTX.")
 
     started = time.perf_counter()
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        input_path = Path(temp_dir) / "original.pdf"
-        output_path = Path(temp_dir) / "sanitized.pdf"
+        input_path = Path(temp_dir) / f"original.{ext}"
+        output_path = Path(temp_dir) / f"sanitized.{ext}"
         input_path.write_bytes(uploaded.getvalue())
 
-        chunks = extract_pdf(input_path)
         pii_pipeline = PIIPipeline()
-        original_results = pii_pipeline.process_document_chunks(chunks)
+        if ext == "pdf":
+            chunks = extract_pdf(input_path)
+            original_results = pii_pipeline.process_document_chunks(chunks)
 
-        redaction_pipeline = RedactionPipeline(pii_pipeline=pii_pipeline)
-        result = redaction_pipeline.process(
-            input_pdf=str(input_path),
-            output_pdf=str(output_path),
-            chunks=chunks,
-            pii_results=original_results,
-        )
+            redaction_pipeline = RedactionPipeline(pii_pipeline=pii_pipeline)
+            result = redaction_pipeline.process(
+                input_pdf=str(input_path),
+                output_pdf=str(output_path),
+                chunks=chunks,
+                pii_results=original_results,
+            )
 
-        with pymupdf.open(input_path) as document:
-            page_count = len(document)
+            with pymupdf.open(input_path) as document:
+                page_count = len(document)
+        else:
+            # Validates the file by content, then picks the DOCX or PPTX extractor.
+            chunks = extract_document(input_path)
+            # Office files also carry hidden text (metadata, comments, notes...).
+            original_results = pii_pipeline.process_document_chunks(scan_chunks(chunks))
+            result = OfficeRedactionPipeline(pii_pipeline=pii_pipeline).process(
+                str(input_path), str(output_path), chunks=chunks, pii_results=original_results
+            )
+            page_count = len(chunks)
 
         rows = []
         for chunk, page_result in zip(chunks, original_results):
@@ -477,6 +498,7 @@ def _run_real_pipeline(uploaded) -> dict:
 
         return {
             "file": uploaded.name,
+            "file_type": ext,
             "pages": page_count,
             "ocr_pages": sum(
                 1
@@ -724,7 +746,7 @@ elif st.session_state.screen == "findings" and st.session_state.res:
 
     with st.expander("Redaction diagnostics"):
         st.write("Backend status:", res.get("redaction_status"))
-        st.write("Sanitized PDF available:", has_bytes)
+        st.write("Sanitized file available:", has_bytes)
         st.write("Redaction annotations applied:", res.get("redaction_count", "N/A"))
         st.write("Verified (no residual PII):", verified)
         st.write("Inspection issues:", res.get("inspection_issues", []))
@@ -802,11 +824,12 @@ elif st.session_state.screen == "findings" and st.session_state.res:
             )
         
         with dl2:
+            out_ext = res.get("file_type", "pdf")
             st.download_button(
-                label="⬇️ Download Sanitized PDF",
+                label=f"⬇️ Download Sanitized {out_ext.upper()}",
                 data=sanitized_data,
-                file_name=res["file"].rsplit(".", 1)[0] + "_SANITIZED.pdf",
-                mime="application/pdf",
+                file_name=res["file"].rsplit(".", 1)[0] + f"_SANITIZED.{out_ext}",
+                mime=OUTPUT_MIME.get(out_ext, "application/octet-stream"),
                 disabled=not has_bytes,
                 use_container_width=True,
             )

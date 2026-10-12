@@ -34,6 +34,9 @@ class BoundingBox(BaseModel):
     image_ref: str | None = Field(
         None, description="Embedded image the word was OCR'd from, e.g. '/word/media/image3.png'"
     )
+    image_box: tuple[float, float, float, float] | None = Field(
+        None, description="(x, y, w, h) in pixels inside image_ref, whatever coord_space is"
+    )
 
 
 class HiddenContent(BaseModel):
@@ -60,6 +63,7 @@ class UnreadRegion(BaseModel):
     h: float
     coord_space: str = "page_pt"
     image_ref: str | None = None
+    image_box: tuple[float, float, float, float] | None = None  # pixels in image_ref; None = whole image
     reason: str = "unread_ink"
 
 
