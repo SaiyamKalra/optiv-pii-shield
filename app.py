@@ -43,11 +43,11 @@ st.set_page_config(
 
 # ── 2. STYLING & CUSTOM CSS ────────────────────────────────────────────────
 st.markdown(
-    """
+"""
 <style>
     /* Reset & Base Typography */
     html, body, [class*="css"], .stApp {
-        font-family: 'Calibri', 'Segoe UI', Arial, sans-serif !important;
+        font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
         background-color: #0d0d14;
         color: #e2e8f0;
         box-sizing: border-box;
@@ -59,12 +59,12 @@ st.markdown(
 
     /* Responsive Main Container */
     .block-container, [data-testid="stMainBlockContainer"] {
-        padding-top: 1.75rem !important;
-        padding-bottom: 2.5rem !important;
-        padding-left: clamp(0.75rem, 3vw, 2.5rem) !important;
-        padding-right: clamp(0.75rem, 3vw, 2.5rem) !important;
-        max-width: 1440px !important;
-        margin: 0 auto !important;
+        padding-top: 1.75rem;
+        padding-bottom: 2.5rem;
+        padding-left: clamp(0.75rem, 3vw, 2.5rem);
+        padding-right: clamp(0.75rem, 3vw, 2.5rem);
+        max-width: 1440px;
+        margin: 0 auto;
     }
 
     /* Headings */
@@ -73,27 +73,32 @@ st.markdown(
     [data-testid="stMarkdownContainer"] h2, 
     [data-testid="stMarkdownContainer"] h3,
     [data-testid="stMarkdownContainer"] h4 {
-        color: #00f2fe !important;
-        font-family: 'Calibri', 'Segoe UI', Arial, sans-serif !important;
-        font-weight: 700 !important;
+        color: #00f2fe;
+        font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+        font-weight: 700;
         word-break: break-word;
-        line-height: 1.25 !important;
+        line-height: 1.25;
+    }
+
+    div[data-testid="stHorizontalBlock"]:has(.main-title) {
+        align-items: center;
     }
 
     .main-title {
-        font-size: clamp(1.4rem, 4vw, 2.3rem) !important;
+        font-size: clamp(1.5rem, 3.5vw, 2.2rem);
         font-weight: 700;
-        color: #00f2fe !important;
+        color: #00f2fe;
         font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
-        margin-bottom: 4px;
+        margin: 0;
+        padding: 0;
+        white-space: nowrap;
+        line-height: 1;
         text-shadow: 0 0 14px rgba(0, 242, 254, 0.28);
-        line-height: 1.2;
-        word-break: break-word;
     }
 
     .sub-text {
-        color: #cbd5e1 !important;
-        font-size: clamp(0.85rem, 1.8vw, 1.05rem) !important;
+        color: #cbd5e1;
+        font-size: clamp(0.85rem, 1.8vw, 1.05rem);
         font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
         margin-bottom: 18px;
         line-height: 1.45;
@@ -130,19 +135,38 @@ st.markdown(
         transform: translateY(-2px);
     }
     .kpi-num {
-        font-size: clamp(1.35rem, 2.6vw, 2rem) !important;
-        font-weight: 700;
-        color: #38bdf8 !important;
+        font-size: clamp(1.35rem, 2.6vw, 2rem);
+        font-weight: 800;
+        color: #38bdf8;
         line-height: 1.15;
         word-break: break-word;
     }
     .kpi-label {
-        font-size: clamp(0.72rem, 1.1vw, 0.88rem) !important;
+        font-size: clamp(0.72rem, 1.1vw, 0.88rem);
         color: #94a3b8;
         margin-top: 5px;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         line-height: 1.2;
+    }
+
+    /* ── DATAFRAME PROGRESS BAR GREEN COLOR ONLY ── */
+    div[data-testid="stDataFrame"] progress::-webkit-progress-value {
+        background-color: #4ade80 !important;
+    }
+    div[data-testid="stDataFrame"] progress::-moz-progress-bar {
+        background-color: #4ade80 !important;
+    }
+    div[data-testid="stDataFrame"] progress {
+        color: #4ade80 !important;
+        accent-color: #4ade80 !important;
+    }
+    div[data-testid="stDataFrame"] [role="progressbar"] > div,
+    div[data-testid="stDataFrame"] [data-testid="stProgress"] > div > div,
+    div[data-testid="stDataFrame"] div[style*="background-color: rgb(255"],
+    div[data-testid="stDataFrame"] div[style*="background-color: red"],
+    div[data-testid="stDataFrame"] div[style*="background-color: #ff"] {
+        background-color: #4ade80 !important;
     }
 
     /* Tokens & Badges */
@@ -211,7 +235,7 @@ st.markdown(
     .status-filename {
         font-size: clamp(1.1rem, 2.4vw, 1.4rem);
         font-weight: 700;
-        color: #00f2fe !important;
+        color: #00f2fe;
         word-break: break-all;
     }
     .status-meta {
@@ -223,6 +247,26 @@ st.markdown(
     .status-time {
         color: #94a3b8;
         font-size: clamp(0.82rem, 1.4vw, 0.95rem);
+    }
+
+    /* Streamlit Status Widget Bounds & Overflow Fix */
+    div[data-testid="stStatusWidget"] {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        overflow: hidden;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    div[data-testid="stStatusWidget"] summary,
+    div[data-testid="stStatusWidget"] button,
+    div[data-testid="stStatusWidget"] > div {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        margin-right: 0;
+        padding-right: 12px;
     }
 
     /* Info Box */
@@ -246,62 +290,62 @@ st.markdown(
 
     /* Buttons */
     .stButton > button {
-        font-family: 'Calibri', 'Segoe UI', Arial, sans-serif !important;
-        font-weight: 600 !important;
-        border-radius: 8px !important;
-        min-height: 42px !important;
-        font-size: clamp(0.82rem, 1.4vw, 0.96rem) !important;
-        transition: all 0.2s ease !important;
-        white-space: normal !important;
-        word-break: break-word !important;
-        line-height: 1.25 !important;
-        padding: 8px 12px !important;
+        font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+        font-weight: 600;
+        border-radius: 8px;
+        min-height: 42px;
+        font-size: clamp(0.82rem, 1.4vw, 0.96rem);
+        transition: all 0.2s ease;
+        white-space: normal;
+        word-break: break-word;
+        line-height: 1.25;
+        padding: 8px 12px;
     }
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%) !important;
-        border: none !important;
-        color: #ffffff !important;
-        box-shadow: 0 2px 10px rgba(6, 182, 212, 0.3) !important;
+        background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%);
+        border: none;
+        color: #ffffff;
+        box-shadow: 0 2px 10px rgba(6, 182, 212, 0.3);
     }
     .stButton > button[kind="secondary"] {
-        background: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid rgba(255, 255, 255, 0.15) !important;
-        color: #cbd5e1 !important;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: #cbd5e1;
     }
     .stButton > button[kind="secondary"]:hover {
-        border-color: #00f2fe !important;
-        color: #00f2fe !important;
-        background: rgba(0, 242, 254, 0.08) !important;
+        border-color: #00f2fe;
+        color: #00f2fe;
+        background: rgba(0, 242, 254, 0.08);
     }
 
     div[data-testid="stDownloadButton"] > button {
-        background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%) !important;
-        color: #ffffff !important;
-        border: none !important;
-        font-weight: 600 !important;
-        border-radius: 8px !important;
-        font-family: 'Calibri', 'Segoe UI', Arial, sans-serif !important;
-        font-size: clamp(0.82rem, 1.4vw, 0.96rem) !important;
-        min-height: 42px !important;
-        padding: 8px 14px !important;
-        white-space: normal !important;
-        word-break: break-word !important;
-        line-height: 1.25 !important;
-        transition: all 0.2s ease !important;
+        background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%);
+        color: #ffffff;
+        border: none;
+        font-weight: 600;
+        border-radius: 8px;
+        font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+        font-size: clamp(0.82rem, 1.4vw, 0.96rem);
+        min-height: 42px;
+        padding: 8px 14px;
+        white-space: normal;
+        word-break: break-word;
+        line-height: 1.25;
+        transition: all 0.2s ease;
     }
     div[data-testid="stDownloadButton"] > button:hover:not(:disabled) {
-        box-shadow: 0 4px 14px rgba(6, 182, 212, 0.45) !important;
+        box-shadow: 0 4px 14px rgba(6, 182, 212, 0.45);
         transform: translateY(-1px);
     }
 
     [data-testid="stDataFrame"] {
-        width: 100% !important;
-        max-width: 100% !important;
-        overflow-x: auto !important;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
     }
     .js-plotly-plot, .plot-container {
-        width: 100% !important;
-        max-width: 100% !important;
+        width: 100%;
+        max-width: 100%;
     }
 </style>
 """,
@@ -311,23 +355,23 @@ st.markdown(
 # ── 3. PIPELINE SETUP & DEMO HELPERS ───────────────────────────────────────
 ENTITY_TYPES = [
     "PERSON",
-    "EMAIL_ADDRESS",
-    "PHONE_NUMBER",
-    "US_SSN",
-    "CREDIT_CARD",
-    "IP_ADDRESS",
+    "EMAIL ADDRESS",
+    "PHONE NUMBER",
+    "US SSN",
+    "CREDIT CARD",
+    "IP ADDRESS",
     "LOCATION",
     "ORGANIZATION",
 ]
 WEIGHTS = [28, 20, 18, 10, 8, 5, 6, 5]
 SOURCES = ["body", "table", "image/OCR", "narrative"]
 DETECTORS = {
-    "PERSON": "spaCy NER",
-    "EMAIL_ADDRESS": "CorpEmail recognizer",
-    "PHONE_NUMBER": "RobustPhone recognizer",
-    "US_SSN": "StrictSSN recognizer",
-    "CREDIT_CARD": "CorpCreditCard recognizer",
-    "IP_ADDRESS": "Presidio regex",
+    "PERSON": "spaCy NER / GLiNER",
+    "EMAIL ADDRESS": "CorpEmail recognizer",
+    "PHONE NUMBER": "RobustPhone recognizer",
+    "US SSN": "StrictSSN recognizer",
+    "CREDIT CARD": "CorpCreditCard recognizer",
+    "IP ADDRESS": "Presidio regex",
     "LOCATION": "spaCy NER",
     "ORGANIZATION": "spaCy NER",
 }
@@ -573,15 +617,17 @@ def render_kpis(items):
 
 
 # ── 5. NAVIGATION HEADER ──────────────────────────────────────────────────
-c_title, c_nav = st.columns([1.3, 2])
+st.markdown('<div class="nav-header-wrapper">', unsafe_allow_html=True)
+c_title, c_nav = st.columns([1, 2], gap="medium")
+
 with c_title:
-    st.markdown('<div class="main-title">🛡️ PII Sentinel</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title">PII Sentinel</div>', unsafe_allow_html=True)
+
 with c_nav:
-    st.markdown('<div class="nav-buttons-row">', unsafe_allow_html=True)
-    n1, n2, n3 = st.columns(3)
+    n1, n2, n3 = st.columns(3, gap="small")
     with n1:
         if st.button(
-            "📁 Upload Screen",
+            "Upload Screen",
             use_container_width=True,
             type="primary" if st.session_state.screen == "upload" else "secondary",
         ):
@@ -589,7 +635,7 @@ with c_nav:
             st.rerun()
     with n2:
         if st.button(
-            "📋 Findings Table",
+            "Findings Table",
             use_container_width=True,
             disabled=st.session_state.res is None,
             type="primary" if st.session_state.screen == "findings" else "secondary",
@@ -598,16 +644,15 @@ with c_nav:
             st.rerun()
     with n3:
         if st.button(
-            "📊 Analytics Charts",
+            "Analytics Charts",
             use_container_width=True,
             type="primary" if st.session_state.screen == "analytics" else "secondary",
         ):
             st.session_state.screen = "analytics"
             st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
+st.markdown('</div>', unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # SCREEN 1 — Upload Screen
@@ -627,16 +672,12 @@ if st.session_state.screen == "upload":
             type=["pdf", "pptx", "docx"],
         )
 
-        col_a, col_b = st.columns(2)
-        go_btn = col_a.button(
-            "🔍 Analyze Document", use_container_width=True, disabled=uploaded is None
+        go_btn = st.button(
+            "Analyze Document", use_container_width=True, disabled=uploaded is None
         )
-        demo_btn = col_b.button("📄 Try Demo File", use_container_width=True)
 
-        if go_btn or demo_btn:
-            name = (
-                uploaded.name if (go_btn and uploaded) else "Cadence_Risk_Policy_v6.pdf"
-            )
+        if go_btn and uploaded:
+            name = uploaded.name
             ext = name.lower().rsplit(".", 1)[-1]
             pages = {"pdf": 35, "pptx": 9}.get(ext, 12)
 
@@ -649,38 +690,29 @@ if st.session_state.screen == "upload":
                 "Re-scanning sanitized output for residual PII",
             ]
             with st.status("Analyzing document...", expanded=True) as status:
-                if go_btn and uploaded:
-                    for step in STEPS[:3]:
-                        st.write(step)
-                        time.sleep(0.15)
-                    try:
-                        st.session_state.res = _run_real_pipeline(uploaded)
-                        for step in STEPS[3:]:
-                            st.write(step)
-                            time.sleep(0.1)
-                        status.update(
-                            label="Document processing finished",
-                            state="complete",
-                            expanded=False,
-                        )
-                    except (ValueError, OSError, RuntimeError) as exc:
-                        status.update(
-                            label="Document processing failed",
-                            state="error",
-                            expanded=False,
-                        )
-                        st.error(f"Processing failed: {exc}")
-                        st.stop()
-                else:
-                    for step in STEPS:
-                        st.write(step)
+                step_placeholder = st.empty()
+
+                for step in STEPS[:3]:
+                    step_placeholder.write(f"✓ {step}")
+                    time.sleep(0.15)
+                try:
+                    st.session_state.res = _run_real_pipeline(uploaded)
+                    for step in STEPS[3:]:
+                        step_placeholder.write(f"✓ {step}")
                         time.sleep(0.1)
-                    st.session_state.res = _demo_pipeline(name, pages)
                     status.update(
-                        label="Demo document processed successfully",
+                        label="Document processing finished",
                         state="complete",
                         expanded=False,
                     )
+                except (ValueError, OSError, RuntimeError) as exc:
+                    status.update(
+                        label="Document processing failed",
+                        state="error",
+                        expanded=False,
+                    )
+                    st.error(f"Processing failed: {exc}")
+                    st.stop()
 
             st.session_state.screen = "findings"
             st.rerun()
@@ -690,10 +722,12 @@ if st.session_state.screen == "upload":
             """
         <div class="info-box">
         <b style="color:#00f2fe; font-size:1.05rem;">Pipeline Steps</b><br><br>
-        1. <b style="color:#38bdf8;">Extract Text:</b> Extracts native text and applies OCR to scanned pages.<br>
-        2. <b style="color:#38bdf8;">Detect PII:</b> Scans text using Presidio regex and spaCy NER models.<br>
-        3. <b style="color:#38bdf8;">Tokenize:</b> Replaces PII with safe tokens like <span class="token">[PERSON_001]</span>.<br>
-        4. <b style="color:#38bdf8;">Verify:</b> Re-scans output to ensure 0% residual leak.<br><br>
+1. <b style="color:#38bdf8;">Extract & OCR:</b> Parses layout structures, tables, and native text while running PyTesseract OCR on scanned pages.<br>
+        2. <b style="color:#38bdf8;">Hybrid Detection:</b> Scans document chunks using Presidio regex rules, spaCy NER, and custom pattern recognizers.<br>
+        3. <b style="color:#38bdf8;">Harvest & Calibrate:</b> Extracts cell candidates under role headers and uses <code>PIIRiskCalibrator</code> to boost non-Western names and multi-line phone numbers.<br>
+        4. <b style="color:#38bdf8;">Tokenize & Redact:</b> Replaces sensitive entities with consistent mapping tokens (e.g., <span class="token">[PERSON_001]</span>) across pages.<br>
+        5. <b style="color:#38bdf8;">Residual Verification:</b> Passes sanitized text through a <code>VerificationGate</code> to verify 0% residual PII leakage.<br>
+        6. <b style="color:#38bdf8;">Optimize Export:</b> Generates token-compressed, LLM-ready Markdown via <code>TokenOptimizer</code>.<br><br>
         <b style="color:#00f2fe;">Supported File Types:</b> PDF, PPTX, DOCX
         </div>
         """,
@@ -701,20 +735,17 @@ if st.session_state.screen == "upload":
         )
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(
-            "<h4>Sample Redaction Preview</h4>",
-            unsafe_allow_html=True,
-        )
+
         st.markdown(
             """
         <div class="info-box" style="font-size:0.95rem; line-height:1.8">
+        <b style="color:#00f2fe; font-size:1.05rem;">Sample Redaction Preview</b><br><br>
         <b style="color:#f87171;">Original:</b> Contact Rahul Sharma at rahul@gmail.com<br>
         <b style="color:#4ade80;">Redacted:</b> Contact <span class="token">[PERSON_001]</span> at <span class="token">[EMAIL_001]</span>
         </div>
         """,
             unsafe_allow_html=True,
         )
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # SCREEN 2 — Findings Table & Data Conversion Metrics
@@ -735,32 +766,22 @@ elif st.session_state.screen == "findings" and st.session_state.res:
     raw_text = "\n".join(c.raw_text for c in raw_chunks if getattr(c, "raw_text", None))
     metrics_data = get_conversion_matrix(raw_text, pii_outputs)
 
-    st.markdown("<h3>📊 Document Transformation & Conversion Summary</h3>", unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Words Processed", metrics_data["total_words_processed"])
-    c2.metric("PII Identified", metrics_data["total_pii_entities_found"])
-    c3.metric("Data Converted (%)", f"{metrics_data['redaction_density_percentage']}%")
-    c4.metric("Verification Gate", "PASSED" if verified else "FLAGGED")
+    st.markdown("<h3>Document Transformation & Conversion Summary</h3>", unsafe_allow_html=True)
+    
+    conversion_kpis = [
+        (str(metrics_data["total_words_processed"]), "TOTAL WORDS PROCESSED"),
+        (str(metrics_data["total_pii_entities_found"]), "PII IDENTIFIED"),
+        (f"{metrics_data['redaction_density_percentage']}%", "DATA CONVERTED"),
+    ]
+    render_kpis(conversion_kpis)
 
     st.divider()
-
-    with st.expander("Redaction diagnostics"):
-        st.write("Backend status:", res.get("redaction_status"))
-        st.write("Sanitized file available:", has_bytes)
-        st.write("Redaction annotations applied:", res.get("redaction_count", "N/A"))
-        st.write("Verified (no residual PII):", verified)
-        st.write("Inspection issues:", res.get("inspection_issues", []))
-        st.write("Inspection warnings:", res.get("inspection_warnings", []))
-
-    BADGE = {"SAFE": "badge-safe", "UNKNOWN": "badge-unknown", "UNSAFE": "badge-unsafe"}
-    ICON = {"SAFE": "✅", "UNKNOWN": "⚠️", "UNSAFE": "❌"}
 
     st.markdown(
         f'<div class="status-banner">'
         f'  <div class="status-filename">{res["file"]}</div>'
         f'  <div class="status-meta">'
-        f'    <span class="{BADGE[state]}">{ICON[state]} {state}</span>'
-        f'    <span class="status-time">⏱️ Processing time: {res["secs"]}s</span>'
+        f'    <span class="status-time">Processing time: {res["secs"]}s</span>'
         f'  </div>'
         f'</div>',
         unsafe_allow_html=True,
@@ -775,120 +796,99 @@ elif st.session_state.screen == "findings" and st.session_state.res:
     ]
     render_kpis(kpi_items)
 
-    tab1, tab2 = st.tabs(["📋 Findings List", "🔒 Sanitized Preview"])
+    # Render Findings List content directly without tabs
+    c_type, c_src, c_pg = st.columns(3)
+    
+    # Format multiselect types to remove underscores
+    formatted_types = sorted([
+        str(t).replace("_", " ").title() for t in df["Type"].unique()
+    ])
+    types = c_type.multiselect("Filter PII type", formatted_types)
+    srcs = c_src.multiselect("Filter source", SOURCES)
+    pg = c_pg.slider("Filter page range", 1, res["pages"], (1, res["pages"]))
 
-    with tab1:
-        thr = st.slider("Review confidence threshold", 0.5, 0.99, thr, 0.01)
-        st.session_state.thr = thr
+    df["Status"] = df["Confidence"].apply(
+        lambda c: "Redacted" if c >= thr else "Needs review"
+    )
+    view = df[df["Page"].between(*pg)].copy()
+    
+    # Pre-format Type column for clean display
+    view["Type"] = view["Type"].astype(str).str.replace("_", " ").str.title()
+    if types:
+        view = view[view["Type"].isin(types)]
+    if srcs:
+        view = view[view["Source"].isin(srcs)]
 
-        c_type, c_src, c_pg = st.columns(3)
-        types = c_type.multiselect("Filter PII type", sorted(df["Type"].unique()))
-        srcs = c_src.multiselect("Filter source", SOURCES)
-        pg = c_pg.slider("Filter page range", 1, res["pages"], (1, res["pages"]))
+    st.caption(f"Displaying {len(view)} of {len(df)} findings.")
+    st.dataframe(
+        view,
+        use_container_width=True,
+        hide_index=True,
+        height=380,
+        column_config={
+            "Confidence": st.column_config.ProgressColumn(
+                "Confidence Score",
+                min_value=0,
+                max_value=1,
+                format="%.3f",
+            )
+        },
+    )
 
-        df["Status"] = df["Confidence"].apply(
-            lambda c: "Redacted" if c >= thr else "Needs review"
-        )
-        view = df[df["Page"].between(*pg)]
-        if types:
-            view = view[view["Type"].isin(types)]
-        if srcs:
-            view = view[view["Source"].isin(srcs)]
+    st.markdown(
+        "<h3>Download Output Files</h3>",
+        unsafe_allow_html=True,
+    )
+    dl1, dl2, dl3 = st.columns(3)
 
-        st.caption(f"Displaying {len(view)} of {len(df)} findings.")
-        st.dataframe(
-            view,
+    with dl1:
+        st.download_button(
+            "Download Findings (CSV)",
+            data=view.to_csv(index=False).encode(),
+            file_name="pii_findings.csv",
+            mime="text/csv",
             use_container_width=True,
-            hide_index=True,
-            height=380,
-            column_config={
-                "Confidence": st.column_config.ProgressColumn(
-                    "Confidence Score", min_value=0, max_value=1, format="%.3f"
-                )
-            },
         )
 
-        st.markdown(
-            "<h3>📥 Download Output Files</h3>",
-            unsafe_allow_html=True,
+    with dl2:
+        st.download_button(
+            label="Download Sanitized PDF",
+            data=sanitized_data,
+            file_name=res["file"].rsplit(".", 1)[0] + "_SANITIZED.pdf",
+            mime="application/pdf",
+            disabled=not has_bytes,
+            use_container_width=True,
         )
-        dl1, dl2, dl3 = st.columns(3)
-
-        with dl1:
+    with dl3:
+        try:
+            optimizer = TokenOptimizer()
+            if not pii_outputs:
+                pii_outputs = [
+                    PIIOutput(
+                        file_id="fallback_001",
+                        file_name=res.get("file", "document.pdf"),
+                        page_number=1,
+                        status="SUCCESS",
+                        sanitized_text="Document processed. PII entities have been tokenised and redacted.",
+                        detected_entities=[],
+                        verification_passed=True,
+                    )
+                ]
+            optimized_md = optimizer.optimize_output(
+                pii_outputs=pii_outputs,
+                raw_original_text=raw_text,
+                chunks=raw_chunks,
+            )
             st.download_button(
-                "⬇️ Download Findings (CSV)",
-                data=view.to_csv(index=False).encode(),
-                file_name="pii_findings.csv",
-                mime="text/csv",
+                "Download LLM Markdown (.md)",
+                data=optimized_md,
+                file_name=res["file"].rsplit(".", 1)[0] + "_OPTIMIZED.md",
+                mime="text/markdown",
+                disabled=False,
                 use_container_width=True,
             )
-        
-        with dl2:
-            out_ext = res.get("file_type", "pdf")
-            st.download_button(
-                label=f"⬇️ Download Sanitized {out_ext.upper()}",
-                data=sanitized_data,
-                file_name=res["file"].rsplit(".", 1)[0] + f"_SANITIZED.{out_ext}",
-                mime=OUTPUT_MIME.get(out_ext, "application/octet-stream"),
-                disabled=not has_bytes,
-                use_container_width=True,
-            )
-        with dl3:
-            try:
-                optimizer = TokenOptimizer()
-                if not pii_outputs:
-                    pii_outputs = [
-                        PIIOutput(
-                            file_id="fallback_001",
-                            file_name=res.get("file", "document.pdf"),
-                            page_number=1,
-                            status="SUCCESS",
-                            sanitized_text="Document processed. PII entities have been tokenised and redacted.",
-                            detected_entities=[],
-                            verification_passed=True,
-                        )
-                    ]
-                optimized_md = optimizer.optimize_output(
-                    pii_outputs=pii_outputs,
-                    raw_original_text=raw_text,
-                    chunks=raw_chunks,
-                )
-                st.download_button(
-                    "⚡ Download LLM Markdown (.md)",
-                    data=optimized_md,
-                    file_name=res["file"].rsplit(".", 1)[0] + "_OPTIMIZED.md",
-                    mime="text/markdown",
-                    disabled=False,
-                    use_container_width=True,
-                )
-            except (ValueError, TypeError) as e:
-                st.error(f"Token Optimizer error: {e}")
-
-    with tab2:
-        b_col, a_col = st.columns(2, gap="large")
-        b_col.markdown(
-            "<h4 style='color:#38bdf8 !important;'>Original Text (Before Redaction)</h4>",
-            unsafe_allow_html=True,
-        )
-        b_col.info(
-            "Rahul Sharma, employee EMP-38104, can be reached at "
-            "rahul@cadence.com or +91-98765-43210. "
-            "His SSN is 123-45-6789. Rahul reports to the Group CRO."
-        )
-        a_col.markdown(
-            "<h4>Sanitized Text (After Redaction)</h4>",
-            unsafe_allow_html=True,
-        )
-        a_col.markdown(
-            '<div class="info-box">'
-            '<span class="token">[PERSON_001]</span>, employee '
-            '<span class="token">[EMPLOYEE_ID_001]</span>, can be reached at '
-            '<span class="token">[EMAIL_001]</span> or <span class="token">[PHONE_001]</span>. '
-            'His SSN is <span class="token">[US_SSN_001]</span>. '
-            '<span class="token">[PERSON_001]</span> reports to the Group CRO.'
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        except (ValueError, TypeError) as e:
+            st.error(f"Token Optimizer error: {e}")
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("← Analyze another document", use_container_width=False):
@@ -903,7 +903,7 @@ elif st.session_state.screen == "analytics":
     res = st.session_state.res
     df = res["findings"].copy() if res and "findings" in res else pd.DataFrame()
 
-    file_title = f"— {res['file']}" if res and "file" in res else "— Enterprise Overview"
+    file_title = f"- {res['file']}" if res and "file" in res else "— Enterprise Overview"
     st.markdown(
         f'<div class="main-title">Analytics Dashboard {file_title}</div>',
         unsafe_allow_html=True,
@@ -955,17 +955,26 @@ elif st.session_state.screen == "analytics":
                 },
             },
             font={"color": "#e2e8f0", "family": "Calibri, Segoe UI, sans-serif"},
-            margin={"l": 20, "r": 20, "t": 50, "b": 35 if is_pie else 25},
+            margin={"l": 20, "r": 20, "t": 50, "b": 60 if is_pie else 25},
         )
         if is_pie:
+            # Prevent tiny slice callout labels from crowding each other
+            fig.update_traces(
+                textposition="inside",
+                textinfo="percent",
+                insidetextorientation="radial",
+            )
+            # Layout legend cleanly with vertical line spacing
             fig.update_layout(
                 legend={
                     "orientation": "h",
                     "yanchor": "top",
-                    "y": -0.12,
+                    "y": -0.18,
                     "xanchor": "center",
                     "x": 0.5,
                     "font": {"size": 11},
+                    "entrywidth": 140,
+                    "entrywidthmode": "pixels",
                 }
             )
         return fig
@@ -985,6 +994,14 @@ elif st.session_state.screen == "analytics":
             df_entity_dist = type_counts
 
         if not df_entity_dist.empty:
+            # Clean underscores and convert to title case
+            df_entity_dist["entity_type"] = (
+                df_entity_dist["entity_type"]
+                .astype(str)
+                .str.replace("_", " ")
+                .str.title()
+            )
+
             fig_pie_type = px.pie(
                 df_entity_dist,
                 names="entity_type",
@@ -1043,6 +1060,14 @@ elif st.session_state.screen == "analytics":
             )
 
         if not df_conf.empty:
+            # Clean underscores and convert to title case
+            df_conf["entity_type"] = (
+                df_conf["entity_type"]
+                .astype(str)
+                .str.replace("_", " ")
+                .str.title()
+            )
+
             fig_bar_conf = px.bar(
                 df_conf,
                 x="entity_type",
