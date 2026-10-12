@@ -3,6 +3,7 @@ PII Sentinel — Frontend
 Run:  streamlit run app.py
 """
 
+import html
 import random
 import tempfile
 import time
@@ -16,15 +17,8 @@ import pandas as pd
 import plotly.express as px
 import pymupdf
 import streamlit as st
-from sqlalchemy.exc import SQLAlchemyError
 
-from analytics.metrics import (
-    fetch_confidence_score,
-    fetch_entity_distribution,
-    fetch_executive_kpis,
-    fetch_recent_pass_rates,
-    get_conversion_matrix,
-)
+from analytics.metrics import get_conversion_matrix
 from extraction.normalizer import extract_document
 from extraction.pdf_extractor import extract_pdf
 from models.schemas import PIIOutput
@@ -249,24 +243,115 @@ st.markdown(
         font-size: clamp(0.82rem, 1.4vw, 0.95rem);
     }
 
-    /* Streamlit Status Widget Bounds & Overflow Fix */
-    div[data-testid="stStatusWidget"] {
-        width: 100%;
-        max-width: 100%;
-        box-sizing: border-box;
-        overflow: hidden;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.15);
+    /* Analytics empty state */
+    .empty-state {
+        max-width: 760px;
+        margin: 28px auto 22px auto;
+        padding: clamp(24px, 4vw, 40px) clamp(18px, 4vw, 40px);
+        text-align: center;
+        background: radial-gradient(ellipse at top, rgba(0, 242, 254, 0.08), rgba(255, 255, 255, 0.02) 70%);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 16px;
+    }
+    .empty-icon {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 14px auto;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #00f2fe;
+        background: rgba(0, 242, 254, 0.10);
+        border: 1px solid rgba(0, 242, 254, 0.35);
+        box-shadow: 0 0 22px rgba(0, 242, 254, 0.18);
+    }
+    .empty-title {
+        color: #f1f5f9;
+        font-size: clamp(1.2rem, 2.4vw, 1.45rem);
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+    .empty-text {
+        color: #94a3b8;
+        font-size: 0.98rem;
+        line-height: 1.5;
+        max-width: 520px;
+        margin: 0 auto 24px auto;
+    }
+    .empty-tiles {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+        text-align: left;
+    }
+    .empty-tile {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px dashed rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        padding: 12px 14px;
+    }
+    .empty-tile-title {
+        color: #38bdf8;
+        font-weight: 600;
+        font-size: 0.92rem;
+        margin-bottom: 3px;
+    }
+    .empty-tile-text {
+        color: #64748b;
+        font-size: 0.82rem;
+        line-height: 1.35;
     }
 
-    div[data-testid="stStatusWidget"] summary,
-    div[data-testid="stStatusWidget"] button,
-    div[data-testid="stStatusWidget"] > div {
+    /* Analysis progress card (replaces st.status, whose header overflowed its box) */
+    .progress-card {
         width: 100%;
-        max-width: 100%;
         box-sizing: border-box;
-        margin-right: 0;
-        padding-right: 12px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin: 8px 0 12px 0;
+    }
+    .progress-title {
+        color: #e2e8f0;
+        font-weight: 700;
+        font-size: 1.02rem;
+        margin-bottom: 10px;
+        word-break: break-word;
+    }
+    .progress-file { color: #00f2fe; }
+    .progress-step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 0;
+        font-size: 0.95rem;
+    }
+    .progress-icon {
+        width: 18px;
+        display: inline-flex;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .progress-step.done { color: #4ade80; }
+    .progress-step.active { color: #e2e8f0; font-weight: 600; }
+    .progress-step.pending { color: #64748b; }
+    .progress-step.failed { color: #f87171; font-weight: 600; }
+    .progress-spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(0, 242, 254, 0.25);
+        border-top-color: #00f2fe;
+        border-radius: 50%;
+        display: inline-block;
+        animation: progress-spin 0.8s linear infinite;
+    }
+    @keyframes progress-spin { to { transform: rotate(360deg); } }
+    .progress-time {
+        color: #94a3b8;
+        font-size: 0.82rem;
+        margin-top: 8px;
     }
 
     /* Info Box */
@@ -441,8 +526,22 @@ OUTPUT_MIME = {
 }
 
 
-def _run_real_pipeline(uploaded) -> dict:
-    """Run extraction, PII detection, redaction and verification (PDF, DOCX, PPTX)."""
+PIPELINE_STAGES = [
+    "Extracting text and running OCR on images",
+    "Detecting PII",
+    "Redacting and re-scanning the sanitized output",
+]
+
+
+def _run_real_pipeline(uploaded, on_stage=None) -> dict:
+    """Run extraction, PII detection, redaction and verification (PDF, DOCX, PPTX).
+
+    on_stage(i) is called when stage PIPELINE_STAGES[i] starts, so the UI shows the
+    real progress instead of fixed timers."""
+    def stage(i):
+        if on_stage is not None:
+            on_stage(i)
+
     ext = uploaded.name.lower().rsplit(".", 1)[-1]
     if ext not in SUPPORTED_EXTENSIONS:
         raise ValueError("Supported file types are PDF, DOCX and PPTX.")
@@ -456,9 +555,12 @@ def _run_real_pipeline(uploaded) -> dict:
 
         pii_pipeline = PIIPipeline()
         if ext == "pdf":
+            stage(0)
             chunks = extract_pdf(input_path)
+            stage(1)
             original_results = pii_pipeline.process_document_chunks(chunks)
 
+            stage(2)
             redaction_pipeline = RedactionPipeline(pii_pipeline=pii_pipeline)
             result = redaction_pipeline.process(
                 input_pdf=str(input_path),
@@ -471,9 +573,12 @@ def _run_real_pipeline(uploaded) -> dict:
                 page_count = len(document)
         else:
             # Validates the file by content, then picks the DOCX or PPTX extractor.
+            stage(0)
             chunks = extract_document(input_path)
             # Office files also carry hidden text (metadata, comments, notes...).
+            stage(1)
             original_results = pii_pipeline.process_document_chunks(scan_chunks(chunks))
+            stage(2)
             result = OfficeRedactionPipeline(pii_pipeline=pii_pipeline).process(
                 str(input_path), str(output_path), chunks=chunks, pii_results=original_results
             )
@@ -692,41 +797,54 @@ if st.session_state.screen == "upload":
 
         if go_btn and uploaded:
             name = uploaded.name
-            ext = name.lower().rsplit(".", 1)[-1]
-            pages = {"pdf": 35, "pptx": 9}.get(ext, 12)
 
-            STEPS = [
-                "Detecting file type and structure",
-                "Extracting text layer",
-                "Running OCR on image pages",
-                "Detecting PII — regex + NER + context rules",
-                "Building token substitution map",
-                "Re-scanning sanitized output for residual PII",
-            ]
-            with st.status("Analyzing document...", expanded=True) as status:
-                step_placeholder = st.empty()
+            progress = st.empty()
+            started = time.perf_counter()
 
-                for step in STEPS[:3]:
-                    step_placeholder.write(f"✓ {step}")
-                    time.sleep(0.15)
-                try:
-                    st.session_state.res = _run_real_pipeline(uploaded)
-                    for step in STEPS[3:]:
-                        step_placeholder.write(f"✓ {step}")
-                        time.sleep(0.1)
-                    status.update(
-                        label="Document processing finished",
-                        state="complete",
-                        expanded=False,
+            def show_progress(current: int, failed: bool = False):
+                """Render the progress card: done stages ticked, the current one
+                animated (or marked failed), the rest greyed out."""
+                rows = []
+                for i, label in enumerate(PIPELINE_STAGES):
+                    if i < current:
+                        state, icon = "done", "✓"
+                    elif i == current and failed:
+                        state, icon = "failed", "✕"
+                    elif i == current:
+                        state, icon = "active", '<span class="progress-spinner"></span>'
+                    else:
+                        state, icon = "pending", "•"
+                    rows.append(
+                        f'<div class="progress-step {state}">'
+                        f'<span class="progress-icon">{icon}</span>{html.escape(label)}</div>'
                     )
-                except (ValueError, OSError, RuntimeError) as exc:
-                    status.update(
-                        label="Document processing failed",
-                        state="error",
-                        expanded=False,
-                    )
-                    st.error(f"Processing failed: {exc}")
-                    st.stop()
+                title = "Processing failed" if failed else (
+                    "Done" if current >= len(PIPELINE_STAGES) else "Analyzing"
+                )
+                progress.markdown(
+                    f'<div class="progress-card">'
+                    f'<div class="progress-title">{title}: '
+                    f'<span class="progress-file">{html.escape(name)}</span></div>'
+                    f'{"".join(rows)}'
+                    f'<div class="progress-time">{time.perf_counter() - started:.0f}s elapsed</div>'
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+            stage_reached = {"i": 0}
+
+            def on_stage(i: int):
+                stage_reached["i"] = i
+                show_progress(i)
+
+            show_progress(0)
+            try:
+                st.session_state.res = _run_real_pipeline(uploaded, on_stage=on_stage)
+                show_progress(len(PIPELINE_STAGES))
+            except (ValueError, OSError, RuntimeError) as exc:
+                show_progress(stage_reached["i"], failed=True)
+                st.error(f"Processing failed: {exc}")
+                st.stop()
 
             st.session_state.screen = "findings"
             st.rerun()
@@ -865,11 +983,12 @@ elif st.session_state.screen == "findings" and st.session_state.res:
         )
 
     with dl2:
+        out_ext = res.get("file_type", "pdf")
         st.download_button(
-            label="Download Sanitized PDF",
+            label=f"Download Sanitized {out_ext.upper()}",
             data=sanitized_data,
-            file_name=res["file"].rsplit(".", 1)[0] + "_SANITIZED.pdf",
-            mime="application/pdf",
+            file_name=res["file"].rsplit(".", 1)[0] + f"_SANITIZED.{out_ext}",
+            mime=OUTPUT_MIME.get(out_ext, "application/octet-stream"),
             disabled=not has_bytes,
             use_container_width=True,
         )
@@ -915,44 +1034,68 @@ elif st.session_state.screen == "findings" and st.session_state.res:
 # ════════════════════════════════════════════════════════════════════════════
 elif st.session_state.screen == "analytics":
     res = st.session_state.res
-    df = res["findings"].copy() if res and "findings" in res else pd.DataFrame()
 
-    file_title = f"- {res['file']}" if res and "file" in res else "— Enterprise Overview"
-    st.markdown(
-        f'<div class="main-title">Analytics Dashboard {file_title}</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="sub-text">Database & pipeline analytics: entity distributions, model confidence, and risk exposure.</div>',
-        unsafe_allow_html=True,
-    )
-
-    try:
-        exec_kpis = fetch_executive_kpis()
-    except (SQLAlchemyError, OSError, ValueError, KeyError):
-        exec_kpis = {"total_documents": 0, "pass_rate_pct": 100.0, "total_pii_masked": 0}
-
-    total_docs = exec_kpis.get("total_documents", 0)
-    pass_rate = exec_kpis.get("pass_rate_pct", 100.0)
-    total_pii = exec_kpis.get("total_pii_masked", 0)
-
-    try:
-        df_conf_metric = fetch_confidence_score()
-        avg_conf_db = (
-            f"{df_conf_metric['avg_confidence'].mean():.2f}"
-            if not df_conf_metric.empty and "avg_confidence" in df_conf_metric.columns
-            else ("N/A" if df.empty else f"{df['Confidence'].mean():.2f}")
+    # Analytics describe the document analysed in this session. The database holds
+    # one row per page from every run (including tests and rescans), so all-time
+    # totals from it would not describe anything the user uploaded.
+    if not res:
+        st.markdown(
+            '<div class="main-title">Analytics Dashboard</div>',
+            unsafe_allow_html=True,
         )
-    except (SQLAlchemyError, OSError, ValueError, KeyError):
-        avg_conf_db = "N/A" if df.empty else f"{df['Confidence'].mean():.2f}"
+        st.markdown(
+            """
+<div class="empty-state">
+<div class="empty-icon">
+<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="12" y="8" width="3" height="10" rx="1"/><rect x="17" y="5" width="3" height="13" rx="1"/></svg>
+</div>
+<div class="empty-title">No document analysed yet</div>
+<div class="empty-text">Upload a PDF, DOCX or PPTX and run the analysis. This page will then break down what was found in that document.</div>
+<div class="empty-tiles">
+<div class="empty-tile"><div class="empty-tile-title">PII by type</div><div class="empty-tile-text">Names, emails, phones, IDs</div></div>
+<div class="empty-tile"><div class="empty-tile-title">Source</div><div class="empty-tile-text">Page text vs image OCR</div></div>
+<div class="empty-tile"><div class="empty-tile-title">Confidence</div><div class="empty-tile-text">Average score per type</div></div>
+<div class="empty-tile"><div class="empty-tile-title">Location</div><div class="empty-tile-text">Findings on each page</div></div>
+</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        _, mid, _ = st.columns([2, 1, 2])
+        with mid:
+            if st.button("Go to Upload Screen", type="primary", use_container_width=True):
+                st.session_state.screen = "upload"
+                st.rerun()
+        st.stop()
 
-    kpi_items = [
-        (str(total_docs), "Total Documents"),
-        (f"{pass_rate:.1f}%", "Verification Pass Rate"),
-        (str(total_pii), "Total PII Masked"),
-        (avg_conf_db, "Avg Model Confidence"),
-    ]
-    render_kpis(kpi_items)
+    df = res["findings"].copy() if "findings" in res else pd.DataFrame()
+
+    st.markdown(
+        f'<div class="main-title">Analytics Dashboard — {html.escape(res["file"])}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sub-text">What was detected in this document: PII types, sources, '
+        "detection confidence and where it appears.</div>",
+        unsafe_allow_html=True,
+    )
+
+    status_label = {
+        "VERIFIED_NO_PII_FOUND": "Verified",
+        "REVIEW_REQUIRED": "Review required",
+        "BLOCKED": "Blocked",
+    }.get(res.get("redaction_status"), res.get("redaction_status") or "N/A")
+    render_kpis([
+        (str(res.get("pages", 0)), "Pages"),
+        (str(len(df)), "PII Findings"),
+        (str(df["Token"].nunique()) if "Token" in df.columns else "0", "Distinct PII Values"),
+        (f"{df['Confidence'].mean():.2f}" if not df.empty else "N/A", "Avg Confidence"),
+        (status_label, "Verification"),
+    ])
+
+    if df.empty:
+        st.info("No PII was detected in this document, so there is nothing to chart.")
+        st.stop()
 
     def style_dark_chart(fig, title_text, is_pie: bool = False):
         fig.update_layout(
@@ -972,13 +1115,11 @@ elif st.session_state.screen == "analytics":
             margin={"l": 20, "r": 20, "t": 50, "b": 60 if is_pie else 25},
         )
         if is_pie:
-            # Prevent tiny slice callout labels from crowding each other
             fig.update_traces(
                 textposition="inside",
                 textinfo="percent",
                 insidetextorientation="radial",
             )
-            # Layout legend cleanly with vertical line spacing
             fig.update_layout(
                 legend={
                     "orientation": "h",
@@ -993,123 +1134,48 @@ elif st.session_state.screen == "analytics":
             )
         return fig
 
-    st.markdown("<h3>Pie Chart Distribution</h3>", unsafe_allow_html=True)
+    def show(fig):
+        st.plotly_chart(
+            fig, use_container_width=True, config={"responsive": True, "displayModeBar": False}
+        )
+
+    df["Type"] = df["Type"].astype(str).str.replace("_", " ").str.title()
+
+    st.markdown("<h3>Distribution</h3>", unsafe_allow_html=True)
     pie_col1, pie_col2 = st.columns(2, gap="large")
-
     with pie_col1:
-        try:
-            df_entity_dist = fetch_entity_distribution()
-        except (SQLAlchemyError, OSError, ValueError, KeyError):
-            df_entity_dist = pd.DataFrame()
-
-        if df_entity_dist.empty and not df.empty and "Type" in df.columns:
-            type_counts = df["Type"].value_counts().reset_index()
-            type_counts.columns = ["entity_type", "occurrences"]
-            df_entity_dist = type_counts
-
-        if not df_entity_dist.empty:
-            # Clean underscores and convert to title case
-            df_entity_dist["entity_type"] = (
-                df_entity_dist["entity_type"]
-                .astype(str)
-                .str.replace("_", " ")
-                .str.title()
-            )
-
-            fig_pie_type = px.pie(
-                df_entity_dist,
-                names="entity_type",
-                values="occurrences",
-                color_discrete_sequence=px.colors.qualitative.Pastel,
-                hole=0.35,
-            )
-            fig_pie_type = style_dark_chart(
-                fig_pie_type, "PII Entity Distribution", is_pie=True
-            )
-            st.plotly_chart(
-                fig_pie_type,
-                use_container_width=True,
-                config={"responsive": True, "displayModeBar": False},
-            )
-        else:
-            st.info("No entity distribution data available.")
-
+        type_counts = df["Type"].value_counts().reset_index()
+        type_counts.columns = ["Type", "Findings"]
+        show(style_dark_chart(
+            px.pie(type_counts, names="Type", values="Findings", hole=0.35,
+                   color_discrete_sequence=px.colors.qualitative.Pastel),
+            "PII by Type", is_pie=True,
+        ))
     with pie_col2:
-        if not df.empty and "Source" in df.columns:
-            source_counts = df["Source"].value_counts().reset_index()
-            source_counts.columns = ["Source", "Count"]
-            fig_pie_source = px.pie(
-                source_counts,
-                names="Source",
-                values="Count",
-                color_discrete_sequence=px.colors.qualitative.Set3,
-                hole=0.35,
-            )
-            fig_pie_source = style_dark_chart(
-                fig_pie_source, "PII Findings Distribution by Source", is_pie=True
-            )
-            st.plotly_chart(
-                fig_pie_source,
-                use_container_width=True,
-                config={"responsive": True, "displayModeBar": False},
-            )
+        source_counts = df["Source"].value_counts().reset_index()
+        source_counts.columns = ["Source", "Findings"]
+        show(style_dark_chart(
+            px.pie(source_counts, names="Source", values="Findings", hole=0.35,
+                   color_discrete_sequence=px.colors.qualitative.Set3),
+            "PII by Source (text vs image OCR)", is_pie=True,
+        ))
 
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    st.markdown("<h3>Bar Graph Analysis</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>Confidence and Location</h3>", unsafe_allow_html=True)
     bar_col1, bar_col2 = st.columns(2, gap="large")
-
     with bar_col1:
-        try:
-            df_conf = fetch_confidence_score()
-        except (SQLAlchemyError, OSError, ValueError, KeyError):
-            df_conf = pd.DataFrame()
-
-        if df_conf.empty and not df.empty and "Type" in df.columns and "Confidence" in df.columns:
-            df_conf = (
-                df.groupby("Type")
-                .agg(avg_confidence=("Confidence", "mean"))
-                .reset_index()
-                .rename(columns={"Type": "entity_type"})
-            )
-
-        if not df_conf.empty:
-            # Clean underscores and convert to title case
-            df_conf["entity_type"] = (
-                df_conf["entity_type"]
-                .astype(str)
-                .str.replace("_", " ")
-                .str.title()
-            )
-
-            fig_bar_conf = px.bar(
-                df_conf,
-                x="entity_type",
-                y="avg_confidence",
-                color="avg_confidence",
-                labels={"entity_type": "Entity Type", "avg_confidence": "Average Confidence"},
-                color_continuous_scale="Blues",
-            )
-            fig_bar_conf = style_dark_chart(fig_bar_conf, "Confidence Score by Entity Type")
-            st.plotly_chart(fig_bar_conf, use_container_width=True, config={"responsive": True, "displayModeBar": False})
-
+        conf = df.groupby("Type", as_index=False)["Confidence"].mean()
+        fig = px.bar(conf, x="Type", y="Confidence", color="Confidence",
+                     color_continuous_scale="Blues", range_y=[0, 1],
+                     labels={"Confidence": "Average confidence"})
+        show(style_dark_chart(fig, "Average Confidence by Type"))
     with bar_col2:
-        try:
-            df_pass = fetch_recent_pass_rates()
-        except (SQLAlchemyError, OSError, ValueError, KeyError):
-            df_pass = pd.DataFrame()
-
-        if not df_pass.empty:
-            fig_bar_pass = px.bar(
-                df_pass,
-                x="document_number",
-                y="pass_rate_pct",
-                labels={"document_number": "Recent Document #", "pass_rate_pct": "Pass Rate (%)"},
-                color="pass_rate_pct",
-                color_continuous_scale="Tealgrn",
-            )
-            fig_bar_pass = style_dark_chart(fig_bar_pass, "Recent Pass Rates (%)")
-            st.plotly_chart(fig_bar_pass, use_container_width=True, config={"responsive": True, "displayModeBar": False})
+        per_page = df.groupby("Page").size().reindex(
+            range(1, int(res.get("pages", 0) or df["Page"].max()) + 1), fill_value=0
+        ).reset_index()
+        per_page.columns = ["Page", "Findings"]
+        fig = px.bar(per_page, x="Page", y="Findings", color="Findings",
+                     color_continuous_scale="Tealgrn")
+        show(style_dark_chart(fig, "Findings per Page"))
 
 else:
     st.session_state.screen = "upload"
