@@ -115,11 +115,12 @@ class PageTextBuilder:
         if text:
             self.hidden.append(HiddenContent(kind=kind, text=text, location=location))
 
-    def add_unread(self, x, y, w, h, *, coord_space="page_pt", image_ref=None, reason="unread_ink"):
+    def add_unread(self, x, y, w, h, *, coord_space="page_pt", image_ref=None, reason="unread_ink",
+                   image_box=None):
         self.unread.append(
             UnreadRegion(
                 page=self.page_number, x=x, y=y, w=w, h=h,
-                coord_space=coord_space, image_ref=image_ref, reason=reason,
+                coord_space=coord_space, image_ref=image_ref, image_box=image_box, reason=reason,
             )
         )
 
@@ -135,6 +136,7 @@ class PageTextBuilder:
         confidence: float | None = None,
         coord_space: str = "page_pt",
         image_ref: str | None = None,
+        image_box: tuple[float, float, float, float] | None = None,
     ):
         start = self._start_word(text)
         if source == "ocr" and confidence is not None:
@@ -158,6 +160,7 @@ class PageTextBuilder:
                 confidence=confidence,
                 coord_space=coord_space,
                 image_ref=image_ref,
+                image_box=image_box,
             )
         )
 
@@ -186,6 +189,7 @@ class PageTextBuilder:
                 word.text, x, y, w, h,
                 source="ocr", confidence=word.conf,
                 coord_space=coord_space, image_ref=image_ref,
+                image_box=(word.left, word.top, word.width, word.height) if image_ref else None,
             )
         self.end_block()
 
@@ -318,7 +322,9 @@ def record_image_outcome(
     builder.images_ocr += 1
     builder.add_ocr_words(outcome.result.words, place, coord_space=coord_space, image_ref=ref)
     for region in outcome.result.unread_regions:
-        builder.add_unread(*place_box(region), coord_space=coord_space, image_ref=ref)
+        x0, y0, x1, y1 = region
+        builder.add_unread(*place_box(region), coord_space=coord_space, image_ref=ref,
+                           image_box=(x0, y0, x1 - x0, y1 - y0))
 
 
 # --- OOXML (DOCX/PPTX) package-level hidden content -------------------------------------
