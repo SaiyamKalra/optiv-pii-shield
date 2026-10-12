@@ -2,7 +2,6 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import ClassVar
 
 try:
     import numpy as np
@@ -13,6 +12,7 @@ try:
     import joblib
 except ImportError:
     joblib = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,20 +31,10 @@ class CandidateFeatureVector:
 
 class PIIRiskCalibrator:
 
-    # RUF012 Fix: ClassVar annotation for mutable sets
-    PERSON_TRIGGERS: ClassVar[set[str]] = {
-        "name", "person", "contact", "individual", "author", "auditor", "sign-off",
-        "officer", "lead", "head", "manager", "director", "executive", "deputy", 
-        "chair", "owner", "delegate", "approver", "reviewer", "custodian",
-        "representative", "coordinator", "analyst", "specialist", "sponsor",
-        "local", "global", "regional", "risk", "compliance", "security",
-        "relationship", "relationship owner", "cfo", "ciso", "cco", "ceo"
-    }
-
-    ID_TRIGGERS: ClassVar[set[str]] = {
-        "pan", "ssn", "passport", "tax id", "ref", "reference", "id number", "code",
-        "phone", "mobile", "tel", "fax", "contact number", "account", "credit", "card"
-    }
+    # Context features are structural, not word lists: an email address nearby signals a
+    # person; a label ending in ":" or "#" right before a number signals an identifier.
+    _EMAIL_NEAR = re.compile(r"[\w.+-]+ ?@ ?[\w-]+\.[\w.]+")
+    _LABEL_BEFORE = re.compile(r"[A-Za-z]{2,}\.?\s*[:#]\s*$")
 
     def __init__(self, model_path: str | None = None):
         self.model = None
@@ -74,8 +64,8 @@ class PIIRiskCalibrator:
         if column_header:
             combined_context += f" {column_header.lower()}"
 
-        has_person_ctx = float(any(kw in combined_context for kw in self.PERSON_TRIGGERS))
-        has_id_ctx = float(any(kw in combined_context for kw in self.ID_TRIGGERS))
+        has_person_ctx = float(bool(self._EMAIL_NEAR.search(combined_context)))
+        has_id_ctx = float(bool(self._LABEL_BEFORE.search(text[max(0, start - 40):start])))
 
         span_len = len(span_text)
         digit_count = sum(c.isdigit() for c in span_text)
@@ -107,8 +97,14 @@ class PIIRiskCalibrator:
         recognizer_name: str = "",
         column_header: str | None = None,
         is_inside_table: bool = False,
+        entity_type: str | None = None,
     ) -> float:
-        """Computes calibrated probability score (0.0 - 1.0)."""
+        """Computes calibrated probability score (0.0 - 1.0).
+
+        With a trained model (models/pii_regressor.joblib) the model scores the span.
+        Without one, the recognizer's own score is returned unchanged: the old fallback
+        added or subtracted guessed amounts (+0.35, +0.25, -0.20) driven by word lists,
+        and measured on the policy PDF it removed real SSNs and changed nothing useful."""
         feats = self.extract_features(
             text=text,
             start=start,
@@ -132,16 +128,6 @@ class PIIRiskCalibrator:
             return float(self.model.predict_proba(X)[0][1])
 
         score = base_score
-
-        if feats.is_title_case_name and (feats.has_person_context or feats.is_inside_table):
-            score += 0.35 
-
-        elif feats.has_international_phone_prefix or (feats.has_id_context and feats.digit_ratio > 0.35):
-            score += 0.25
-
-        elif not feats.has_person_context and not feats.has_id_context and feats.digit_ratio > 0.8:
-            score -= 0.20
-
         return min(1.0, max(0.0, score))
 
     def harvest_table_cell_candidates(
@@ -153,18 +139,10 @@ class PIIRiskCalibrator:
         if not normalized_text:
             return extra_spans
 
-        header_lower = (column_header or "").lower()
-        is_person_col = any(h in header_lower for h in self.PERSON_TRIGGERS)
-
         name_pattern = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z\-]+)+)\b")
         for match in name_pattern.finditer(cell_text):
-            val = match.group(1).strip()
-            if val.upper() not in {
-                "LOCAL RISK", "RISK OFFICER", "LEGAL ENTITY", "RELATIONSHIP OWNER",
-                "RISK COMMITTEE", "GROUP EXECUTIVE", "DATA PROTECTION"
-            }:
-                base_harvest_score = 0.55 if is_person_col else 0.45
-                extra_spans.append((match.start(1), match.end(1), "PERSON", base_harvest_score))
+            # Harvested names go through the same document-based PERSON checks.
+            extra_spans.append((match.start(1), match.end(1), "PERSON", 0.45))
 
         phone_pattern = re.compile(
             r"(?:\+\d{1,3}[\s\-\.]*)?(?:\(?\d{2,4}\)?[\s\-\.]*)*\d{3,4}[\s\-\.]*\d{3,4}"

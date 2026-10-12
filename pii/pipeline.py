@@ -20,7 +20,6 @@ from pydantic import TypeAdapter
 from sqlalchemy.exc import SQLAlchemyError
 
 from config.settings import (
-    IGNORED_WORDS,
     MIN_NER_SCORE,
     MIN_PATTERN_SCORE,
     NER_RECOGNIZER_PREFIXES,
@@ -28,16 +27,31 @@ from config.settings import (
     ContextualNameRecognizer,
     CorpCreditCardRecognizer,
     CorpEmailRecognizer,
+    DateOfBirthRecognizer,
     DirectorIdRecognizer,
-    DocumentReferenceRecognizer,
     EmployeeIdRecognizer,
-    ExceptionIdRecognizer,
+    NationalIdRecognizer,
+    PanRecognizer,
+    PassportRecognizer,
     RobustPhoneRecognizer,
+    StreetAddressRecognizer,
     StrictSsnRecognizer,
+    VendorIdRecognizer,
 )
 from database.db import init_db
 from database.repository import save_pipeline_output
 from models.schemas import DetectedEntityDetail, ExtractionInput, PIIOutput
+from pii.person_filter import (
+    DocumentVocabulary,
+    canonical_names,
+    is_person_name,
+    is_single_name_word,
+    name_tokens,
+    repeated_first_names,
+    surname_keys,
+    surname_spans,
+    trim_person_span,
+)
 from pii.regressor_calibrator import PIIRiskCalibrator
 from pii.token_manager import TokenManager
 from pii.verifier import VerificationGate
@@ -50,17 +64,25 @@ logger = logging.getLogger("PIIPipeline")
 ENTITY_PRIORITY = {
     "EMPLOYEE_ID": 0,
     "DIRECTOR_ID": 0,
+    "VENDOR_ID": 0,
+    "PASSPORT": 0,
+    "PAN": 0,
+    "NATIONAL_ID": 0,
     "EXCEPTION_ID": 0,
     "DOCUMENT_REFERENCE": 0,
     "CREDIT_CARD": 1,
     "US_SSN": 1,
     "IP_ADDRESS": 1,
     "EMAIL_ADDRESS": 1,
+    "DATE_OF_BIRTH": 1,
+    "STREET_ADDRESS": 1,
     "PHONE_NUMBER": 2,
     "PERSON": 3,
     "ORGANIZATION": 4,
     "LOCATION": 4,
 }
+
+PROPAGATED_NAME_SCORE = 0.9
 
 DEFAULT_ENTITY_PRIORITY = 99
 
@@ -89,51 +111,23 @@ def _recognizer_name(result) -> str:
     return str(meta.get("recognizer_name", ""))
 
 
+def _is_model_backed(span: _Span) -> bool:
+    """True if spaCy's statistical model produced the span (not one of our regexes)."""
+    return span.recognizer.casefold().startswith(
+        tuple(name.casefold() for name in NER_RECOGNIZER_PREFIXES)
+    )
+
+
 def _min_score_for(span: _Span) -> float:
     """Determine confidence threshold based on recognizer origin."""
     recognizer_name = span.recognizer.casefold()
 
-    ner_prefixes = tuple(
-        name.casefold() for name in NER_RECOGNIZER_PREFIXES
-    ) + ("glinerrecognizer", "gliner")
+    ner_prefixes = tuple(name.casefold() for name in NER_RECOGNIZER_PREFIXES)
 
     if recognizer_name.startswith(ner_prefixes):
         return MIN_NER_SCORE
 
     return MIN_PATTERN_SCORE
-
-
-def _is_valid_ner_candidate(span_text: str, entity_type: str) -> bool:
-    """Filter out ML false positives like regulatory standards, policy refs, and layout labels."""
-    cleaned = span_text.strip()
-    upper_val = cleaned.upper()
-
-    if entity_type == "DOCUMENT_REFERENCE":
-        return True
-
-    REGULATORY_ACRONYMS = {
-        "ISO", "COSO", "BCBS", "NIST", "DORA", "GDPR", "GLBA",
-        "DPDP", "UK DPA", "IIA", "PRA", "RCSA", "BASEL", "SLA", "KPI"
-    }
-    if any(term in upper_val for term in REGULATORY_ACRONYMS):
-        return False
-
-    if re.search(r"\b(?:ISO|NIST|SP|SS|BCBS|COSO)\b|(?:\d{4,5}:\d{4})", cleaned, re.IGNORECASE):
-        return False
-
-    if entity_type == "PERSON":
-        if cleaned.islower():
-            return False
-        if any(char in ":/\\_{}=" or char.isdigit() for char in cleaned):
-            return False
-
-    return not (
-        entity_type == "ORGANIZATION"
-        and any(
-            w in upper_val
-            for w in ["ACT", "POLICY", "FRAMEWORK", "MODEL", "STANDARD", "GUIDELINES", "RESILIENCE"]
-        )
-    )
 
 
 class PIIPipeline:
@@ -162,6 +156,11 @@ class PIIPipeline:
                             "LAW",
                             "EVENT",
                             "PRODUCT",
+                            # Organisations and bare places are not redacted.
+                            "ORG",
+                            "GPE",
+                            "LOC",
+                            "NORP",
                         ]
                     },
                 }
@@ -181,9 +180,15 @@ class PIIPipeline:
         registry.add_recognizer(CorpCreditCardRecognizer)
         registry.add_recognizer(EmployeeIdRecognizer)
         registry.add_recognizer(DirectorIdRecognizer)
-        registry.add_recognizer(ExceptionIdRecognizer)
-        registry.add_recognizer(DocumentReferenceRecognizer)
+        registry.add_recognizer(VendorIdRecognizer)
+        registry.add_recognizer(PassportRecognizer)
+        registry.add_recognizer(PanRecognizer)
+        registry.add_recognizer(NationalIdRecognizer)
+        registry.add_recognizer(DateOfBirthRecognizer)
+        registry.add_recognizer(StreetAddressRecognizer)
         registry.add_recognizer(ContextualNameRecognizer())
+        # Policy numbers (GRP-POL-...) and exception IDs (EXC-...) are not personal
+        # data, so DocumentReferenceRecognizer / ExceptionIdRecognizer are not registered.
 
         self.analyzer = AnalyzerEngine(
             nlp_engine=nlp_engine, registry=registry
@@ -196,6 +201,218 @@ class PIIPipeline:
         payload: ExtractionInput,
         shared_token_manager: TokenManager = None,
     ) -> PIIOutput:
+        vocab = DocumentVocabulary([payload.raw_text])
+        spans = self._detect_spans(payload, vocab)
+        spans = self._resolve_names([payload], {payload.page_number: spans}, vocab)
+        return self._build_output(payload, spans[payload.page_number], shared_token_manager)
+
+    def process_document_chunks(
+        self, chunks: list[ExtractionInput]
+    ) -> list[PIIOutput]:
+        """Detect on every page first, then share what was learned across pages:
+        a person's full name found on one page is redacted wherever it appears
+        (tables often lack the context that made it detectable elsewhere)."""
+        shared_token_manager = TokenManager()
+        # What the document says about its own words: ordinary words (seen in
+        # lowercase) and name parts confirmed by its email addresses.
+        vocab = DocumentVocabulary(chunk.raw_text for chunk in chunks)
+        spans_by_page = {chunk.page_number: self._detect_spans(chunk, vocab) for chunk in chunks}
+        spans_by_page = self._resolve_names(chunks, spans_by_page, vocab)
+        return [
+            self._build_output(chunk, spans_by_page[chunk.page_number], shared_token_manager)
+            for chunk in chunks
+        ]
+
+    def _detect_spans(self, payload: ExtractionInput, vocab: DocumentVocabulary) -> list[_Span]:
+        """Candidate spans on one page: scored, filtered and (for PERSON) trimmed.
+        Overlaps are not resolved yet."""
+        raw_text = payload.raw_text
+        if not raw_text or not raw_text.strip():
+            return []
+
+        results = self.analyzer.analyze(
+            text=raw_text, entities=TARGET_ENTITIES, language="en"
+        )
+
+        column_header = getattr(payload, "column_header", None)
+        is_inside_table = getattr(payload, "is_table_cell", False) or bool(column_header)
+
+        candidates: list[_Span] = []
+
+        for res in results:
+            start, end = _trim_span(raw_text, res.start, res.end)
+            if res.entity_type == "PERSON":
+                start, end = trim_person_span(raw_text, start, end, vocab)
+            if start >= end:
+                continue
+
+            rec_name = _recognizer_name(res)
+
+            calibrated_score = self.calibrator.predict_confidence(
+                text=raw_text,
+                start=start,
+                end=end,
+                base_score=res.score,
+                recognizer_name=rec_name,
+                column_header=column_header,
+                is_inside_table=is_inside_table,
+                entity_type=res.entity_type,
+            )
+
+            candidates.append(
+                _Span(
+                    start=start,
+                    end=end,
+                    entity_type=res.entity_type,
+                    score=calibrated_score,
+                    recognizer=rec_name,
+                )
+            )
+
+        if is_inside_table or column_header:
+            harvested = self.calibrator.harvest_table_cell_candidates(
+                cell_text=raw_text, column_header=column_header
+            )
+            for h_start, h_end, h_type, h_score in harvested:
+                calibrated_score = self.calibrator.predict_confidence(
+                    text=raw_text,
+                    start=h_start,
+                    end=h_end,
+                    base_score=h_score,
+                    column_header=column_header,
+                    is_inside_table=True,
+                    entity_type=h_type,
+                )
+                candidates.append(
+                    _Span(
+                        start=h_start,
+                        end=h_end,
+                        entity_type=h_type,
+                        score=calibrated_score,
+                        recognizer="TableHarvester",
+                    )
+                )
+
+        valid_candidates: list[_Span] = []
+        for span in candidates:
+            if span.score < _min_score_for(span):
+                continue
+
+            val = raw_text[span.start : span.end]
+
+            # A PERSON must be name-shaped with no ordinary words. Whether a span found
+            # only by our regex pattern has enough evidence, and whether a single word
+            # is kept, is decided per document in _resolve_names.
+            if span.entity_type == "PERSON" and not (
+                is_person_name(val, vocab) or is_single_name_word(val, vocab)
+            ):
+                continue
+
+            valid_candidates.append(span)
+
+        return valid_candidates
+
+    def _resolve_names(
+        self,
+        chunks: list[ExtractionInput],
+        spans_by_page: dict[int, list[_Span]],
+        vocab: DocumentVocabulary,
+    ) -> dict[int, list[_Span]]:
+        """Document-level PERSON decisions, then overlap removal per page.
+
+        - full names: those spaCy's model found, plus names found only by our regex
+          pattern that have evidence (a part confirmed by an email address, or a word
+          from a name the model found);
+        - single words ("Raghavan") are kept only if they belong to such a name or are
+          confirmed by an email address;
+        - every other occurrence of an accepted full name is added as a PERSON span.
+        """
+        texts = {chunk.page_number: chunk.raw_text or "" for chunk in chunks}
+
+        def value_of(page, span):
+            return " ".join(texts[page][span.start : span.end].split())
+
+        person_spans = [
+            (page, span) for page, spans in spans_by_page.items()
+            for span in spans if span.entity_type == "PERSON"
+        ]
+        model_names = {
+            value_of(page, span) for page, span in person_spans
+            if _is_model_backed(span) and is_person_name(value_of(page, span), vocab)
+        }
+        model_words = {t for name in model_names for t in name_tokens(name) if len(t) > 2}
+        full_names = model_names | {
+            value_of(page, span) for page, span in person_spans
+            if not _is_model_backed(span)
+            and is_person_name(value_of(page, span), vocab, model_backed=False, known_words=model_words)
+        }
+        accepted_names = full_names
+        full_names = canonical_names(full_names)
+        known_words = {t for name in full_names for t in name_tokens(name) if len(t) > 2}
+        first_names = {
+            words[0] for name in full_names
+            if len(words := name_tokens(name)) > 1 and not words[0].endswith(".")
+        }
+        name_patterns = [
+            re.compile(r"(?<![\w-])" + r"\s+".join(map(re.escape, name.split())) + r"(?![\w-])")
+            for name in sorted(full_names, key=len, reverse=True)
+        ]
+
+        def keep(page, span):
+            if span.entity_type != "PERSON":
+                return True
+            value = value_of(page, span)
+            if value in accepted_names:
+                return True  # a wider form is replaced by its canonical name below
+            tokens = name_tokens(value)
+            return len(tokens) == 1 and (
+                tokens[0] in known_words or vocab.is_email_confirmed(tokens[0])
+            )
+
+        keys = surname_keys(full_names, vocab)
+        pairs = repeated_first_names(texts.values(), keys, vocab)
+
+        resolved: dict[int, list[_Span]] = {}
+        for page, spans in spans_by_page.items():
+            text = texts[page]
+            kept = [span for span in spans if keep(page, span)]
+            # Full names found anywhere, longest first; then every known surname with
+            # its initials or first name ("T. Lindqvist", "Ifeoma C. Adeyemi").
+            name_ranges = [m.span() for pattern in name_patterns for m in pattern.finditer(text)]
+            name_ranges += surname_spans(text, keys, first_names, vocab, pairs)
+            for a, b in name_ranges:
+                # A detected identifier (email, ID...) is never overwritten.
+                if any(s.entity_type != "PERSON" and s.start < b and s.end > a for s in kept):
+                    continue
+                # Overlapping names merge into one span: two names side by side
+                # ("Devansh R. Kulkarni M. T. Achebe") both stay fully covered, and a
+                # partial span ("Nathaniel", "Anonymous Helena") is replaced.
+                for s in kept:
+                    if s.recognizer == "NamePropagation" and s.start < b and s.end > a:
+                        a, b = min(a, s.start), max(b, s.end)
+                kept = [
+                    s for s in kept
+                    if not (s.entity_type == "PERSON" and s.start < b and s.end > a)
+                ]
+                kept.append(
+                    _Span(
+                        start=a,
+                        end=b,
+                        entity_type="PERSON",
+                        score=PROPAGATED_NAME_SCORE,
+                        recognizer="NamePropagation",
+                    )
+                )
+            resolved[page] = self._remove_overlapping_spans(kept)
+        return resolved
+
+    def _build_output(
+        self,
+        payload: ExtractionInput,
+        spans: list[_Span],
+        shared_token_manager: TokenManager = None,
+    ) -> PIIOutput:
+        """Tokenise the page, run the verification gate and save the result."""
         raw_text = payload.raw_text
         file_id = payload.file_id
         page_num = payload.page_number
@@ -227,93 +444,8 @@ class PIIPipeline:
             else TokenManager()
         )
 
-        results = self.analyzer.analyze(
-            text=raw_text, entities=TARGET_ENTITIES, language="en"
-        )
-
-        column_header = getattr(payload, "column_header", None)
-        is_inside_table = getattr(payload, "is_table_cell", False) or bool(column_header)
-
-        candidates: list[_Span] = []
-
-        for res in results:
-            start, end = _trim_span(raw_text, res.start, res.end)
-            if start >= end:
-                continue
-
-            rec_name = _recognizer_name(res)
-
-            calibrated_score = self.calibrator.predict_confidence(
-                text=raw_text,
-                start=start,
-                end=end,
-                base_score=res.score,
-                recognizer_name=rec_name,
-                column_header=column_header,
-                is_inside_table=is_inside_table,
-            )
-
-            candidates.append(
-                _Span(
-                    start=start,
-                    end=end,
-                    entity_type=res.entity_type,
-                    score=calibrated_score,
-                    recognizer=rec_name,
-                )
-            )
-
-        if is_inside_table or column_header:
-            harvested = self.calibrator.harvest_table_cell_candidates(
-                cell_text=raw_text, column_header=column_header
-            )
-            for h_start, h_end, h_type, h_score in harvested:
-                calibrated_score = self.calibrator.predict_confidence(
-                    text=raw_text,
-                    start=h_start,
-                    end=h_end,
-                    base_score=h_score,
-                    column_header=column_header,
-                    is_inside_table=True,
-                )
-                candidates.append(
-                    _Span(
-                        start=h_start,
-                        end=h_end,
-                        entity_type=h_type,
-                        score=calibrated_score,
-                        recognizer="TableHarvester",
-                    )
-                )
-
-        valid_candidates: list[_Span] = []
-        for span in candidates:
-            if span.score < _min_score_for(span):
-                continue
-
-            val = raw_text[span.start : span.end]
-
-            if not _is_valid_ner_candidate(val, span.entity_type):
-                continue
-
-            if val.upper() in IGNORED_WORDS or any(
-                w in val.upper()
-                for w in [
-                    "RACI MATRIX",
-                    "COMPLIANCE SIGN-OFF",
-                    "INFRASTRUCTURE NODES",
-                    "ROSTER APPENDIX",
-                    "SLA & KPI",
-                ]
-            ):
-                continue
-
-            valid_candidates.append(span)
-
-        filtered_spans = self._remove_overlapping_spans(valid_candidates)
-
         detected_details = []
-        for span in filtered_spans:
+        for span in spans:
             original_val = raw_text[span.start : span.end]
             token = token_mgr.get_or_create_token(original_val, span.entity_type)
 
@@ -361,18 +493,6 @@ class PIIPipeline:
             logger.warning(f"Failed to persist output to DB: {e}")
 
         return result
-
-    def process_document_chunks(
-        self, chunks: list[ExtractionInput]
-    ) -> list[PIIOutput]:
-        shared_token_manager = TokenManager()
-        outputs = []
-        for chunk in chunks:
-            out = self.process_chunk(
-                chunk, shared_token_manager=shared_token_manager
-            )
-            outputs.append(out)
-        return outputs
 
     def _remove_overlapping_spans(self, results: list[_Span]) -> list[_Span]:
         """Keep one span per overlapping cluster."""

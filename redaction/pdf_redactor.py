@@ -21,6 +21,34 @@ class PDFRedactor:
             )
         ]
 
+    @staticmethod
+    def _scrub_hidden_content(document) -> None:
+        """Remove what a reader cannot see on the page but a file viewer can: document
+        info (author, title...), XMP metadata, comments and other annotations, links
+        (mailto: addresses), bookmarks, form-field values and embedded files.
+
+        Word boxes only cover page text, so a name in the author field or in a comment
+        would survive redaction otherwise. Page content itself is left untouched.
+        """
+        for page in document:
+            for annot in list(page.annots() or []):
+                page.delete_annot(annot)
+        document.set_toc([])
+        document.scrub(
+            metadata=True,
+            xml_metadata=True,
+            attached_files=True,
+            embedded_files=True,
+            thumbnails=True,
+            javascript=True,
+            reset_fields=True,
+            reset_responses=True,
+            remove_links=True,
+            clean_pages=False,
+            hidden_text=False,
+            redactions=False,
+        )
+
     def redact(
         self,
         input_pdf: str,
@@ -81,6 +109,7 @@ class PDFRedactor:
 
                 page.apply_redactions()
 
+            self._scrub_hidden_content(document)
             document.save(output_pdf, garbage=3, deflate=True, deflate_images=True)
 
         finally:
