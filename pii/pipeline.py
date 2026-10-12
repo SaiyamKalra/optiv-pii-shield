@@ -38,7 +38,7 @@ from config.settings import (
 from database.db import init_db
 from database.repository import save_pipeline_output
 from models.schemas import DetectedEntityDetail, ExtractionInput, PIIOutput
-from pii.gliner_recognizer import GlinerRecognizer
+from pii.regressor_calibrator import PIIRiskCalibrator
 from pii.token_manager import TokenManager
 from pii.verifier import VerificationGate
 from redaction.token_redaction.token_optimizer import TokenOptimizer
@@ -108,11 +108,9 @@ def _is_valid_ner_candidate(span_text: str, entity_type: str) -> bool:
     cleaned = span_text.strip()
     upper_val = cleaned.upper()
 
-    # Always allow explicitly targeted document references
     if entity_type == "DOCUMENT_REFERENCE":
         return True
 
-    # 1. Reject standard regulatory frameworks and policy codes
     REGULATORY_ACRONYMS = {
         "ISO", "COSO", "BCBS", "NIST", "DORA", "GDPR", "GLBA",
         "DPDP", "UK DPA", "IIA", "PRA", "RCSA", "BASEL", "SLA", "KPI"
@@ -120,18 +118,15 @@ def _is_valid_ner_candidate(span_text: str, entity_type: str) -> bool:
     if any(term in upper_val for term in REGULATORY_ACRONYMS):
         return False
 
-    # Regex check for standard codes like ISO 31000, SP 800-37, SS1/21 (GRP-POL excluded)
     if re.search(r"\b(?:ISO|NIST|SP|SS|BCBS|COSO)\b|(?:\d{4,5}:\d{4})", cleaned, re.IGNORECASE):
         return False
 
-    # 2. Filter PERSON false positives (allow Title Case, ALL-CAPS, and initials)
     if entity_type == "PERSON":
         if cleaned.islower():
             return False
         if any(char in ":/\\_{}=" or char.isdigit() for char in cleaned):
             return False
 
-    # 3. Filter ORGANIZATION false positives
     return not (
         entity_type == "ORGANIZATION"
         and any(
@@ -149,7 +144,6 @@ class PIIPipeline:
         except SQLAlchemyError as e:
             logger.warning(f"Failed to initialize database: {e}")
 
-        # Configure spaCy NLP Engine with properly nested configuration structure
         configuration = {
             "nlp_engine_name": "spacy",
             "models": [
@@ -181,7 +175,6 @@ class PIIPipeline:
 
         registry.remove_recognizer("PhoneRecognizer")
 
-        # Register custom domain-specific pattern recognizers WITH INSTANTIATION ()
         registry.add_recognizer(CorpEmailRecognizer)
         registry.add_recognizer(RobustPhoneRecognizer)
         registry.add_recognizer(StrictSsnRecognizer)
@@ -192,17 +185,11 @@ class PIIPipeline:
         registry.add_recognizer(DocumentReferenceRecognizer)
         registry.add_recognizer(ContextualNameRecognizer())
 
-        # Register custom GLiNER ML recognizer
-        gliner_recognizer = GlinerRecognizer(
-            model_name="urchade/gliner_medium-v2.1",
-            threshold=0.42,
-        )
-        registry.add_recognizer(gliner_recognizer)
-
         self.analyzer = AnalyzerEngine(
             nlp_engine=nlp_engine, registry=registry
         )
         self.verifier = VerificationGate(analyzer_engine=self.analyzer)
+        self.calibrator = PIIRiskCalibrator(model_path="models/pii_regressor.joblib")
 
     def process_chunk(
         self,
@@ -244,34 +231,69 @@ class PIIPipeline:
             text=raw_text, entities=TARGET_ENTITIES, language="en"
         )
 
-        candidates: list[_Span] = []
-        for res in results:
-            logger.debug(
-                f"DETECTED: {raw_text[res.start:res.end]!r} "
-                f"| ENTITY: {res.entity_type} "
-                f"| SCORE: {res.score:.2f} "
-                f"| RECOGNIZER: {_recognizer_name(res)}"
-            )
+        column_header = getattr(payload, "column_header", None)
+        is_inside_table = getattr(payload, "is_table_cell", False) or bool(column_header)
 
+        candidates: list[_Span] = []
+
+        for res in results:
             start, end = _trim_span(raw_text, res.start, res.end)
             if start >= end:
                 continue
 
-            span = _Span(
+            rec_name = _recognizer_name(res)
+
+            calibrated_score = self.calibrator.predict_confidence(
+                text=raw_text,
                 start=start,
                 end=end,
-                entity_type=res.entity_type,
-                score=res.score,
-                recognizer=_recognizer_name(res),
+                base_score=res.score,
+                recognizer_name=rec_name,
+                column_header=column_header,
+                is_inside_table=is_inside_table,
             )
 
+            candidates.append(
+                _Span(
+                    start=start,
+                    end=end,
+                    entity_type=res.entity_type,
+                    score=calibrated_score,
+                    recognizer=rec_name,
+                )
+            )
+
+        if is_inside_table or column_header:
+            harvested = self.calibrator.harvest_table_cell_candidates(
+                cell_text=raw_text, column_header=column_header
+            )
+            for h_start, h_end, h_type, h_score in harvested:
+                calibrated_score = self.calibrator.predict_confidence(
+                    text=raw_text,
+                    start=h_start,
+                    end=h_end,
+                    base_score=h_score,
+                    column_header=column_header,
+                    is_inside_table=True,
+                )
+                candidates.append(
+                    _Span(
+                        start=h_start,
+                        end=h_end,
+                        entity_type=h_type,
+                        score=calibrated_score,
+                        recognizer="TableHarvester",
+                    )
+                )
+
+        valid_candidates: list[_Span] = []
+        for span in candidates:
             if span.score < _min_score_for(span):
                 continue
 
-            val = raw_text[start:end]
+            val = raw_text[span.start : span.end]
 
-            # Structural & domain validation to drop false positives
-            if not _is_valid_ner_candidate(val, res.entity_type):
+            if not _is_valid_ner_candidate(val, span.entity_type):
                 continue
 
             if val.upper() in IGNORED_WORDS or any(
@@ -286,9 +308,9 @@ class PIIPipeline:
             ):
                 continue
 
-            candidates.append(span)
+            valid_candidates.append(span)
 
-        filtered_spans = self._remove_overlapping_spans(candidates)
+        filtered_spans = self._remove_overlapping_spans(valid_candidates)
 
         detected_details = []
         for span in filtered_spans:
