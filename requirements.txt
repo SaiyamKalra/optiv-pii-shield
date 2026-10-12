@@ -3,28 +3,29 @@ presidio-analyzer==2.2.35
 presidio-anonymizer==2.2.35
 spacy>=3.8.0
 pydantic>=2.9.0
-gliner>=0.2.0
+joblib>=1.3.0
 
-# analytics and database
+# Analytics, Database & Machine Learning
 pandas
 sqlalchemy
 psycopg2-binary
+numpy>=1.26
 
 # UI (app.py)
 streamlit
 plotly
 torchvision
 
-# PDF extraction + OCR (also requires the Tesseract binary, installed separately)
+# PDF Extraction & OCR (Requires Tesseract binary installed separately)
 PyMuPDF>=1.24.0
 pytesseract>=0.3.10
 Pillow>=10.0.0
 python-dotenv>=1.0.0
-numpy>=1.26
 
-# DOCX + PPTX extraction (embedded images are OCR'd with the same Tesseract engine)
+# DOCX & PPTX Extraction
 python-docx>=1.1.0
 python-pptx>=1.0.0
 
+# Testing & Linting
 pytest>=8.0.0
 ruff>=0.3.0
