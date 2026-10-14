@@ -132,3 +132,28 @@ def get_conversion_matrix(raw_text: str, pii_outputs: list) -> dict:
         "entity_breakdown": entity_type_counts,
         "estimated_raw_tokens": estimated_raw_tokens,
     }
+
+
+def reading_coverage(chunks: list) -> dict:
+    """How much of a document was read reliably, from what extraction reported.
+
+    Items are words plus unread regions (ink OCR could not read), so a barcode counts
+    against coverage even though it holds no words. A word is reliable unless OCR
+    flagged it as low-confidence. A page with extraction errors was not inspected, so
+    none of it is reliable.
+    """
+    total = reliable = 0
+    for chunk in chunks or []:
+        words = len((getattr(chunk, "raw_text", "") or "").split())
+        unread = len(getattr(chunk, "unread_regions", None) or [])
+        if getattr(chunk, "extraction_errors", None):
+            total += max(words, 1) + unread
+            continue
+        doubtful = min(int(getattr(chunk, "low_confidence_word_count", 0) or 0), words)
+        total += words + unread
+        reliable += words - doubtful
+    return {
+        "total": total,
+        "reliable": reliable,
+        "coverage_pct": round(reliable / total * 100, 2) if total else 100.0,
+    }
