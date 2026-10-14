@@ -52,7 +52,6 @@ from pii.person_filter import (
     surname_spans,
     trim_person_span,
 )
-from pii.regressor_calibrator import PIIRiskCalibrator
 from pii.token_manager import TokenManager
 from pii.verifier import VerificationGate
 from redaction.token_redaction.token_optimizer import TokenOptimizer
@@ -194,7 +193,6 @@ class PIIPipeline:
             nlp_engine=nlp_engine, registry=registry
         )
         self.verifier = VerificationGate(analyzer_engine=self.analyzer)
-        self.calibrator = PIIRiskCalibrator(model_path="models/pii_regressor.joblib")
 
     def process_chunk(
         self,
@@ -234,9 +232,6 @@ class PIIPipeline:
             text=raw_text, entities=TARGET_ENTITIES, language="en"
         )
 
-        column_header = getattr(payload, "column_header", None)
-        is_inside_table = getattr(payload, "is_table_cell", False) or bool(column_header)
-
         candidates: list[_Span] = []
 
         for res in results:
@@ -246,52 +241,15 @@ class PIIPipeline:
             if start >= end:
                 continue
 
-            rec_name = _recognizer_name(res)
-
-            calibrated_score = self.calibrator.predict_confidence(
-                text=raw_text,
-                start=start,
-                end=end,
-                base_score=res.score,
-                recognizer_name=rec_name,
-                column_header=column_header,
-                is_inside_table=is_inside_table,
-                entity_type=res.entity_type,
-            )
-
             candidates.append(
                 _Span(
                     start=start,
                     end=end,
                     entity_type=res.entity_type,
-                    score=calibrated_score,
-                    recognizer=rec_name,
+                    score=res.score,
+                    recognizer=_recognizer_name(res),
                 )
             )
-
-        if is_inside_table or column_header:
-            harvested = self.calibrator.harvest_table_cell_candidates(
-                cell_text=raw_text, column_header=column_header
-            )
-            for h_start, h_end, h_type, h_score in harvested:
-                calibrated_score = self.calibrator.predict_confidence(
-                    text=raw_text,
-                    start=h_start,
-                    end=h_end,
-                    base_score=h_score,
-                    column_header=column_header,
-                    is_inside_table=True,
-                    entity_type=h_type,
-                )
-                candidates.append(
-                    _Span(
-                        start=h_start,
-                        end=h_end,
-                        entity_type=h_type,
-                        score=calibrated_score,
-                        recognizer="TableHarvester",
-                    )
-                )
 
         valid_candidates: list[_Span] = []
         for span in candidates:

@@ -1,20 +1,3 @@
-"""Measure PII detection quality on saved extraction chunks (no OCR, ~10 s for the PDF).
-
-    python -m extraction FILE.pdf --save-chunks %TEMP%/chunks.json    # once
-    python -m pii.evaluate %TEMP%/chunks.json [--top 20]
-
-Scored against tests/fixtures/cadence_ground_truth.json for that file:
-- structured identifiers (emails, phones, IDs...) count as true positives, except
-  policy numbers and exception IDs, which are not personal data;
-- a PERSON / ORGANIZATION / LOCATION / address finding is a true positive only if it
-  contains a word from the file's hand-checked `people` list, otherwise false positive;
-- misses: each known identifier (missed, or only partly covered), split into
-  "extraction" (not in the extracted text) and "detection", plus every occurrence
-  of each listed full name (name recall).
-
-Output contains PII values from the sample files; keep it out of the repo.
-"""
-
 import argparse
 import json
 import logging
@@ -32,7 +15,6 @@ NOT_PERSONAL_TYPES = {"DOCUMENT_REFERENCE", "EXCEPTION_ID"}
 
 
 def _is_true_positive(finding, people: set[str]) -> bool:
-    """Structured identifiers are correct; a name or address must hold a labelled word."""
     if finding.entity_type in NOT_PERSONAL_TYPES:
         return False
     if finding.entity_type in NAME_LIKE_TYPES:
@@ -41,7 +23,6 @@ def _is_true_positive(finding, people: set[str]) -> bool:
 
 
 def _flexible(value: str) -> re.Pattern:
-    """Match a value with any (or no) whitespace between its characters' words."""
     return re.compile(r"\s*".join(map(re.escape, value.replace(" ", ""))))
 
 
@@ -113,14 +94,6 @@ def score(chunks: list[ExtractionInput], results, truth: dict) -> dict:
 
 
 def word_matrix(chunks: list[ExtractionInput], results, truth: dict) -> dict:
-    """Confusion matrix over every whitespace-separated word of every page.
-
-    Actual PII word: inside a known identifier occurrence, a word of the file's `people`
-    list, or inside a finding that is correct at finding level. Predicted PII word:
-    inside any finding that is not a policy number. Names split by OCR or layout still
-    count word by word. Precision is therefore bounded by the finding-level labels and
-    recall by the identifier and name labels.
-    """
     people = set(truth.get("people", []))
     by_page = {r.page_number: r.detected_entities for r in results}
     tp = fp = fn = tn = 0
@@ -130,8 +103,6 @@ def word_matrix(chunks: list[ExtractionInput], results, truth: dict) -> dict:
         for page, value in truth.get("identifiers", []):
             if page == chunk.page_number:
                 actual_spans += [m.span() for m in _flexible(value).finditer(text)]
-        # Words inside a finding that is correct at finding level (so a middle initial
-        # in "Naomi K. Osadebe" counts); recall below still rests on labels only.
         actual_spans += [(f.start, f.end) for f in findings if _is_true_positive(f, people)]
         predicted = [(f.start, f.end) for f in findings if f.entity_type not in NOT_PERSONAL_TYPES]
         for m in re.finditer(r"\S+", text):
@@ -170,8 +141,6 @@ def main():
     chunks = TypeAdapter(list[ExtractionInput]).validate_python(
         json.loads(Path(args.chunks).read_text(encoding="utf-8"))
     )
-    # DOCX/PPTX carry hidden text (metadata, comments, notes): scan it after the page
-    # text, as the Office pipeline does.
     for i, chunk in enumerate(chunks):
         hidden = "\n".join(h.text for h in chunk.hidden_content if h.text)
         if hidden:

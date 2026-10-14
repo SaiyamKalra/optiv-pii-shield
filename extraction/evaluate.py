@@ -1,16 +1,3 @@
-# extraction/evaluate.py
-"""Measure extraction quality on the case-study files against a ground-truth file.
-
-python -m extraction.evaluate [DOCS_DIR] [--ground-truth FILE] [--json REPORT]
-
-Reports, per file:
-- identifier recall: known identifiers found exactly on their page;
-- row integrity: known table rows whose cells come out in order on one line
-  (a proxy for structure retention);
-- OCR quality, unread regions and hidden content found.
-The report contains counts only, never extracted text.
-"""
-
 import argparse
 import json
 import logging
@@ -37,13 +24,14 @@ def _row_on_one_line(text: str, cells: list[str]) -> bool:
     return False
 
 
-def evaluate_file(path: Path, truth: dict) -> dict:
-    started = time.perf_counter()
-    chunks = extract_document(path)
-    elapsed = time.perf_counter() - started
+def evaluate_file(path: Path, truth: dict, chunks=None, elapsed: float | None = None) -> dict:
+    if chunks is None:
+        started = time.perf_counter()
+        chunks = extract_document(path)
+        elapsed = time.perf_counter() - started
     pages = {c.page_number: c.raw_text for c in chunks}
 
-    report = {"file": path.name, "pages": len(chunks), "seconds": round(elapsed, 1)}
+    report = {"file": path.name, "pages": len(chunks), "seconds": round(elapsed or 0.0, 1)}
 
     if "identifiers" in truth:
         missed = [
@@ -100,10 +88,6 @@ def evaluate(docs_dir: Path, ground_truth: Path) -> list[dict]:
     return reports
 
 def evaluate_accuracy(ground_truth_entities: list, detected_entities: list) -> dict:
-    """
-    ground_truth_entities: [(start, end, entity_type), ...]
-    detected_entities: [(start, end, entity_type), ...]
-    """
     gt_set = set(ground_truth_entities)
     pred_set = set(detected_entities)
 

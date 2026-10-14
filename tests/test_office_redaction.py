@@ -1,7 +1,3 @@
-# tests/test_office_redaction.py
-"""DOCX/PPTX redaction: text masked in every part, PII in images blacked out,
-namespaces kept intact, and the rescan verifies the saved file."""
-
 import io
 import re
 import sys
@@ -36,8 +32,6 @@ SECRETS = ["John Smith", "john.smith@cadencefg.com", "EMP-38104"]
 
 
 class FakePII:
-    """Finds the known SECRETS in raw_text (stands in for Presidio + spaCy)."""
-
     def __init__(self, values=SECRETS):
         self.values = values
         self.calls = 0
@@ -68,7 +62,7 @@ def _no_ocr_extractor(path):
 def _docx(path: Path):
     d = docx.Document()
     p = d.add_paragraph("Contact ")
-    p.add_run("John").bold = True  # PII split across runs
+    p.add_run("John").bold = True
     p.add_run(" Smith at john.smith@cadencefg.com, staff id EMP-38104.")
     d.add_paragraph("Annual review by the risk team.")
     table = d.add_table(rows=1, cols=2)
@@ -95,8 +89,6 @@ def _all_text(path: Path) -> str:
                        if n.endswith((".xml", ".rels")))
 
 
-# --- XML masking -------------------------------------------------------------------------
-
 def test_value_pattern_matches_whole_words_and_any_whitespace():
     matcher = value_pattern(["Ann Lee"])
     assert matcher.spans("Ann\n  Lee") == [(0, 9)]
@@ -119,7 +111,7 @@ def test_redact_xml_keeps_namespace_prefixes_and_masks_split_runs():
 
     assert count == 1
     text = out.decode("utf-8")
-    assert 'xmlns:w14="' in text and 'mc:Ignorable="w14"' in text  # ElementTree drops these
+    assert 'xmlns:w14="' in text and 'mc:Ignorable="w14"' in text
     assert "<w:t>" in text and "standalone" in text
     assert "".join(etree.fromstring(out).itertext()) == "Hi " + MASK_CHAR * 10 + "!"
 
@@ -128,8 +120,6 @@ def test_unchanged_part_is_byte_identical():
     xml = b'<?xml version="1.0"?><a xmlns="urn:x"><p><t>nothing here</t></p></a>'
     assert redact_xml(xml, value_pattern(["John Smith"])) == (xml, 0)
 
-
-# --- images ------------------------------------------------------------------------------
 
 def test_redact_image_blacks_out_box_and_whole_image():
     buf = io.BytesIO()
@@ -151,7 +141,6 @@ def test_image_targets_use_pixel_boxes_and_unread_regions():
         bounding_boxes=[
             BoundingBox(page=1, text="id", x=1, y=1, w=1, h=1, char_start=0, char_end=2,
                         source="ocr", image_ref="/ppt/media/image1.png", image_box=(5, 5, 10, 10)),
-            # Slide coordinates, but image_box gives the pixels.
             BoundingBox(page=1, text="EMP-38104", x=300, y=200, w=50, h=10, char_start=3,
                         char_end=12, source="ocr", image_ref="/ppt/media/image1.png",
                         image_box=(20, 5, 40, 10)),
@@ -167,8 +156,6 @@ def test_image_targets_use_pixel_boxes_and_unread_regions():
     assert targets == {"/ppt/media/image1.png": [(20, 5, 40, 10)], "/word/media/image9.emf": [None]}
 
 
-# --- end to end --------------------------------------------------------------------------
-
 def test_docx_is_redacted_and_verified(tmp_path):
     src, out = tmp_path / "in.docx", tmp_path / "out.docx"
     _docx(src)
@@ -180,10 +167,10 @@ def test_docx_is_redacted_and_verified(tmp_path):
     text = _all_text(out)
     for secret in SECRETS:
         assert secret not in text
-    assert "Annual review" in text  # not over-masked
-    opened = docx.Document(out)  # still a valid Word file
+    assert "Annual review" in text
+    opened = docx.Document(out)
     assert MASK_CHAR in opened.paragraphs[0].text
-    assert opened.core_properties.author == MASK_CHAR * 10  # hidden metadata scanned too
+    assert opened.core_properties.author == MASK_CHAR * 10
 
 
 def test_pptx_is_redacted_and_verified(tmp_path):
@@ -205,8 +192,6 @@ def test_pii_left_after_rescan_blocks(tmp_path):
     _docx(src)
 
     class Stubborn(FakePII):
-        """Always reports a finding, so verification can never pass."""
-
         def process_document_chunks(self, chunks):
             outputs = super().process_document_chunks(chunks)
             outputs[0].detected_entities.append(DetectedEntityDetail(
@@ -228,7 +213,7 @@ def test_scan_chunks_appends_hidden_text_after_visible_text():
                             hidden_content=[HiddenContent(kind="metadata", text="John Smith")])
     scanned = scan_chunks([chunk])[0]
     assert scanned.raw_text.startswith("visible") and scanned.raw_text.endswith("John Smith")
-    assert chunk.raw_text == "visible"  # original untouched
+    assert chunk.raw_text == "visible"
 
 
 def test_values_are_split_at_table_cells_and_lines():
@@ -254,7 +239,6 @@ def test_unwritable_image_format_is_saved_as_png_and_relinked(tmp_path, monkeypa
                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
                    '<Relationship Id="rId1" Type="image" Target="media/image1.bmp"/></Relationships>')
         z.writestr("word/media/image1.bmp", buf.getvalue())
-    # Stand in for EMF/WMF: readable by Pillow, but treated as not writable.
     monkeypatch.setattr(office_xml_utils, "SAVABLE_IMAGE_FORMATS", {"PNG"})
 
     stats = office_xml_utils.redact_office_archive(
@@ -275,8 +259,6 @@ def test_ner_guesses_left_after_rescan_need_review_not_block(tmp_path):
     _docx(src)
 
     class Guessy(FakePII):
-        """Like the real NER: tags masked text ("Contact ████") as a name."""
-
         def process_document_chunks(self, chunks):
             outputs = super().process_document_chunks(chunks)
             for chunk, output in zip(chunks, outputs):
@@ -290,14 +272,12 @@ def test_ner_guesses_left_after_rescan_need_review_not_block(tmp_path):
     result = OfficeRedactionPipeline(pii_pipeline=Guessy(), extractor=_no_ocr_extractor).process(src, out)
 
     assert result["status"] == "REVIEW_REQUIRED", result
-    assert result["passes"] == 1  # guesses about masked text are not masked again
+    assert result["passes"] == 1
     assert result["verification_passed"] and not result["inspection_issues"]
     assert any("guesses" in w["reason"] for w in result["inspection_warnings"])
 
 
 def test_value_spanning_paragraphs_of_a_table_cell_is_masked():
-    # PPTX cell with "T. Lindqvist" and "CIO" as two paragraphs; extraction reads
-    # "T. Lindqvist CIO", so that is the value the detector returns.
     xml = (b'<a:tc xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:txBody>'
            b'<a:p><a:r><a:t>T. Lindqvist</a:t></a:r></a:p><a:p><a:r><a:t>CIO</a:t></a:r></a:p>'
            b'</a:txBody></a:tc>')

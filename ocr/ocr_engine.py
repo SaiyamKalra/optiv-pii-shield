@@ -1,5 +1,3 @@
-# ocr/ocr_engine.py
-
 import logging
 import os
 import shutil
@@ -18,56 +16,41 @@ logger = logging.getLogger("OcrEngine")
 
 DEFAULT_WINDOWS_TESSERACT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-# Images shorter than this (in pixels) are upscaled before OCR so small text is legible.
 MIN_OCR_HEIGHT_PX = 1000
 UPSCALE_FACTOR = 2
-# Mean grayscale below this means a dark background with light text -> invert.
 DARK_IMAGE_THRESHOLD = 110
 LOW_CONF_THRESHOLD = 60.0
-# Characters Tesseract may not output. "|" is almost never real text in a scan, but
-# Tesseract picks it for a lowercase "l", which breaks emails like "l.brannstrom@...".
 CHAR_BLACKLIST = "|"
-# Share of the CPUs used for OCR when OCR_WORKERS isn't set (leaves headroom for the rest
-# of the machine), and an upper bound so memory for queued page images stays modest.
 OCR_CPU_SHARE = 0.75
 OCR_MAX_WORKERS = 16
-# Seconds before a single Tesseract call is abandoned.
 OCR_TIMEOUT_S = 180
 
-# Second pass on lines that contain low-confidence words.
 LINE_RETRY_SCALE = 3.0
 LINE_RETRY_MIN_GAIN = 5.0
 
-# Finding ink (dark marks) that no OCR word covers.
-INK_LEVEL = 128               # grayscale below this counts as ink
-INK_TILE_PX = 24              # analysis grid cell size
-INK_TILE_MIN_PIXELS = 12      # a cell needs at least this much leftover ink
-INK_REGION_MIN_TILES = 3      # smaller leftovers are specks, not content
-INK_MAX_REGIONS = 15          # bound the extra OCR work per image
-INK_MIN_SIDE_PX = 6           # thinner leftovers are rule fragments
-INK_SOLID_FILL = 0.85         # ink density above this is a filled band, not marks
-DARK_BAND = 0.6               # regions this dark hold light text on a dark fill
-LINE_RETRY_MAX = 30           # most low-confidence lines re-read per image
-ORIENTATION_MIN_GAIN = 1.5    # a rotation must read this much better to be used
-LONG_LINE_FRACTION = 0.08     # straight runs longer than this share of the image are rules/borders
+INK_LEVEL = 128
+INK_TILE_PX = 24
+INK_TILE_MIN_PIXELS = 12
+INK_REGION_MIN_TILES = 3
+INK_MAX_REGIONS = 15
+INK_MIN_SIDE_PX = 6
+INK_SOLID_FILL = 0.85
+DARK_BAND = 0.6
+LINE_RETRY_MAX = 30
+ORIENTATION_MIN_GAIN = 1.5
+LONG_LINE_FRACTION = 0.08
 
 
 def _usable_cpus() -> int:
-    """CPUs this process may run on (respects affinity/container limits where Python can see them)."""
-    counter = getattr(os, "process_cpu_count", None)  # Python 3.13+
+    counter = getattr(os, "process_cpu_count", None)
     if counter is not None:
         return counter() or 1
-    if hasattr(os, "sched_getaffinity"):  # Linux
+    if hasattr(os, "sched_getaffinity"):
         return len(os.sched_getaffinity(0)) or 1
     return os.cpu_count() or 1
 
 
 def default_ocr_workers() -> int:
-    """How many images to OCR at once on this machine.
-
-    OCR_WORKERS (environment or .env) wins when it is a positive integer; otherwise
-    75% of the usable CPUs, at least 1 and at most OCR_MAX_WORKERS.
-    """
     load_dotenv()
     configured = os.environ.get("OCR_WORKERS", "").strip()
     if configured:
@@ -82,7 +65,6 @@ def default_ocr_workers() -> int:
 
 
 def resolve_tesseract_cmd() -> str | None:
-    """Find the Tesseract binary: TESSERACT_CMD (.env or environment), PATH, default install."""
     load_dotenv()
     env_cmd = os.environ.get("TESSERACT_CMD")
     if env_cmd and os.path.exists(env_cmd):
@@ -99,8 +81,6 @@ def resolve_tesseract_cmd() -> str | None:
 
 @dataclass
 class OcrWord:
-    """A word recognised by Tesseract. Coordinates are pixels in the input image."""
-
     text: str
     left: float
     top: float
@@ -114,17 +94,11 @@ class OcrWord:
 
 @dataclass
 class OcrResult:
-    """Words read from an image, plus areas holding ink that could not be read.
-
-    unread_regions are (x0, y0, x1, y1) pixel boxes in the input image.
-    """
-
     words: list[OcrWord]
     unread_regions: list[tuple[float, float, float, float]] = field(default_factory=list)
 
 
 def is_meaningful(word: OcrWord) -> bool:
-    """Words with no letters or digits (table rules, bullets) can't hold PII."""
     return any(ch.isalnum() for ch in word.text)
 
 
@@ -146,7 +120,6 @@ class OcrEngine:
         self._available: bool | None = None
 
     def is_available(self) -> bool:
-        """Check this engine's own binary (pytesseract caches its version check globally)."""
         if self._available is None:
             self._available = False
             cmd = self.tesseract_cmd and (shutil.which(self.tesseract_cmd) or self.tesseract_cmd)
@@ -161,16 +134,10 @@ class OcrEngine:
         return self._available
 
     def preprocess(self, img: Image.Image, scale: float = 1.0) -> tuple[Image.Image, float]:
-        """Grayscale, invert dark images, stretch contrast, upscale small ones.
-
-        Returns the processed image and the total scale factor applied, so word
-        boxes can be mapped back to the original image's pixels.
-        """
         gray = img.convert("L")
 
         if ImageStat.Stat(gray).mean[0] < DARK_IMAGE_THRESHOLD:
             gray = ImageOps.invert(gray)
-        # Stretch contrast so faint grey text reads as dark text.
         gray = ImageOps.autocontrast(gray, cutoff=1)
 
         if gray.height < MIN_OCR_HEIGHT_PX:
@@ -188,9 +155,6 @@ class OcrEngine:
         return self._tesseract(processed, scale, psm)
 
     def _tesseract(self, processed: Image.Image, scale: float, psm: int | None = None) -> list[OcrWord]:
-        """Run Tesseract on an already preprocessed image; boxes are divided by scale."""
-        # pytesseract reads the binary path from a module global; set it per call so
-        # engines configured with different binaries don't interfere.
         pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
         data = pytesseract.image_to_data(
             processed,
@@ -203,7 +167,6 @@ class OcrEngine:
         words = []
         for i, text in enumerate(data["text"]):
             conf = float(data["conf"][i])
-            # level 5 = word; conf -1 marks non-word layout rows
             if data["level"][i] != 5 or conf < 0 or not text.strip():
                 continue
             words.append(
@@ -222,7 +185,6 @@ class OcrEngine:
         return words
 
     def ocr_image(self, img: Image.Image) -> list[OcrWord]:
-        """OCR an image; retry once at a larger scale if mean confidence is low."""
         words = self._run(img, scale=1.0)
         if mean_confidence(words) >= self.low_conf_threshold:
             return words
@@ -237,14 +199,6 @@ class OcrEngine:
         return words
 
     def ocr_image_detailed(self, img: Image.Image, px_per_inch: float | None = None) -> OcrResult:
-        """Full OCR: whole image (turned upright if it is stored sideways or upside
-        down), second pass on hard lines and unread ink, then report whatever ink is
-        still not covered by a word.
-
-        px_per_inch is the image's real resolution where known; it lets rules and
-        borders (an inch or longer) be told apart from short marks like barcode bars.
-        Returned coordinates are pixels in the image as given.
-        """
         angle, upright, words = self._best_orientation(img)
         words = self._refine_low_confidence_lines(upright, words)
         words = self._read_uncovered_ink(upright, words, px_per_inch)
@@ -255,8 +209,6 @@ class OcrEngine:
         return OcrResult(words, unread)
 
     def _best_orientation(self, img: Image.Image) -> tuple[int, Image.Image, list[OcrWord]]:
-        """Angle (counter-clockwise degrees) that turns the text upright, the upright
-        image, and its words. Only tried when the image as given reads poorly."""
         words = self.ocr_image(img)
         if mean_confidence(words) >= self.low_conf_threshold:
             return 0, img, words
@@ -274,13 +226,11 @@ class OcrEngine:
             logger.info("Image text read upright after rotating %d degrees", best[1])
         return best[1], best[2], best[3]
 
-    # --- second pass: lines with low-confidence words ---------------------------------
     def _refine_low_confidence_lines(self, img: Image.Image, words: list[OcrWord]) -> list[OcrWord]:
         lines: dict[tuple[int, int, int], list[OcrWord]] = {}
         for w in words:
             lines.setdefault((w.block, w.par, w.line), []).append(w)
 
-        # Only lines with a real low-confidence word (3+ characters) are worth re-reading.
         hard = [
             key for key, line_words in lines.items()
             if any(
@@ -309,15 +259,9 @@ class OcrEngine:
             result.extend(replaced.get(key, line_words))
         return result
 
-    # --- re-reading many small crops ---------------------------------------------------
     def _read_crops(
         self, img: Image.Image, boxes: list[tuple[int, int, int, int]], scale: float, psm: int
     ) -> dict[int, list[OcrWord]]:
-        """OCR several crops of img in parallel (each Tesseract call is its own process).
-
-        Returns words per crop index, in the original image's pixel coordinates. A failed
-        crop is left out of the result, so callers keep what they had.
-        """
         def read(box):
             try:
                 words = self._run(img.crop(box), scale=scale, psm=psm)
@@ -332,7 +276,6 @@ class OcrEngine:
         results = _crop_pool().map(read, boxes) if len(boxes) > 1 else map(read, boxes)
         return {i: words for i, words in enumerate(results) if words is not None}
 
-    # --- second pass: ink that no word covers -----------------------------------------
     def _read_uncovered_ink(self, img: Image.Image, words: list[OcrWord],
                             rule_px: float | None = None) -> list[OcrWord]:
         regions = _uncovered_ink_regions(img, words, rule_px)[:INK_MAX_REGIONS]
@@ -353,7 +296,6 @@ class OcrEngine:
         added = []
         for index in range(len(boxes)):
             for w in found_by_region.get(index, []):
-                # Only keep confident recoveries; anything else stays reported as unread.
                 if w.conf < self.low_conf_threshold or not is_meaningful(w):
                     continue
                 if any(_overlap(w, existing) > 0.3 for existing in words + added):
@@ -367,7 +309,6 @@ class OcrEngine:
 
 
 def mean_confidence(words: list[OcrWord]) -> float:
-    """Average confidence of words that contain letters or digits."""
     scored = [w for w in words if is_meaningful(w)] or words
     if not scored:
         return 0.0
@@ -384,7 +325,6 @@ def _clamp_box(box, size) -> tuple[int, int, int, int] | None:
 
 
 def _overlap(a: OcrWord, b: OcrWord) -> float:
-    """Intersection area as a fraction of the smaller word."""
     ix = max(0.0, min(a.left + a.width, b.left + b.width) - max(a.left, b.left))
     iy = max(0.0, min(a.top + a.height, b.top + b.height) - max(a.top, b.top))
     smaller = min(a.width * a.height, b.width * b.height) or 1.0
@@ -392,13 +332,12 @@ def _overlap(a: OcrWord, b: OcrWord) -> float:
 
 
 def _long_runs(mask: np.ndarray, length: int) -> np.ndarray:
-    """Pixels that belong to a horizontal run of at least `length` set pixels."""
     height, width = mask.shape
     if width < length:
         return np.zeros_like(mask)
     csum = np.zeros((height, width + 1), dtype=np.int32)
     np.cumsum(mask, axis=1, out=csum[:, 1:])
-    full = (csum[:, length:] - csum[:, :-length]) == length  # window starts, (H, W-L+1)
+    full = (csum[:, length:] - csum[:, :-length]) == length
     starts = np.zeros((height, full.shape[1] + 1), dtype=np.int32)
     np.cumsum(full, axis=1, out=starts[:, 1:])
     j = np.arange(width)
@@ -414,8 +353,6 @@ def _ink_mask(img: Image.Image, rule_px: float | None = None) -> np.ndarray:
     gray = ImageOps.autocontrast(gray, cutoff=1)
     ink = np.asarray(gray) < INK_LEVEL
 
-    # Remove long straight rules and borders (table lines, solid fills); keep text and
-    # short marks such as barcode bars.
     length = int(rule_px) if rule_px else max(60, int(LONG_LINE_FRACTION * min(ink.shape)))
     lines = _long_runs(ink, length) | _long_runs(ink.T, length).T
     return ink & ~lines
@@ -424,7 +361,6 @@ def _ink_mask(img: Image.Image, rule_px: float | None = None) -> np.ndarray:
 def _uncovered_ink_regions(
     img: Image.Image, words: list[OcrWord], rule_px: float | None = None
 ) -> list[tuple[float, float, float, float]]:
-    """Boxes (pixels) around clusters of ink that no OCR word covers."""
     ink = _ink_mask(img, rule_px)
     height, width = ink.shape
     covered = np.zeros_like(ink)
@@ -474,32 +410,27 @@ def _uncovered_ink_regions(
 
 
 def _looks_like_content(region, ink, gray, covered) -> bool:
-    """Drop leftovers that are table fills or rule fragments rather than marks."""
     x0, y0, x1, y1 = (int(v) for v in region)
     short, long_side = sorted((x1 - x0, y1 - y0))
     if short < INK_MIN_SIDE_PX:
         return False
     if short < 4 * INK_MIN_SIDE_PX and long_side > 4 * short:
-        return False  # a thin sliver: connector or rule fragment
+        return False
     if ink[y0:y1, x0:x1].mean() > INK_SOLID_FILL:
         return False
     if _is_hollow_frame(ink[y0:y1, x0:x1]):
         return False
     if (gray[y0:y1, x0:x1] < 100).mean() > DARK_BAND:
-        # Light text on a dark fill: only content if some light text is still unread.
         light_unread = (gray[y0:y1, x0:x1] > 170) & ~covered[y0:y1, x0:x1]
         return light_unread.mean() > 0.02
     return True
 
 
 def _reading_score(words: list[OcrWord]) -> float:
-    """Total confidence of real words: rewards reading more text, and reading it well."""
     return sum(w.conf for w in words if is_meaningful(w) and len(w.text) >= 2)
 
 
 def _unrotate_box(box, angle: int, size: tuple[int, int]) -> tuple[float, float, float, float]:
-    """Map an (x0, y0, x1, y1) box from an image rotated `angle` degrees counter-clockwise
-    (PIL Image.rotate with expand=True) back to the original image of `size`."""
     width, height = size
     x0, y0, x1, y1 = box
     if angle == 180:
@@ -520,7 +451,6 @@ def _unrotate_word(word: OcrWord, angle: int, size: tuple[int, int]) -> OcrWord:
 
 
 def _is_hollow_frame(ink: np.ndarray) -> bool:
-    """A box outline (highlight rectangle, button border) with nothing unread inside."""
     height, width = ink.shape
     if min(height, width) < 4 * INK_MIN_SIDE_PX:
         return False
@@ -530,7 +460,6 @@ def _is_hollow_frame(ink: np.ndarray) -> bool:
 
 
 def _line_box(line_words: list[OcrWord], size) -> tuple[int, int, int, int] | None:
-    """A line's bounding box with some padding, clamped to the image."""
     x0 = min(w.left for w in line_words)
     y0 = min(w.top for w in line_words)
     x1 = max(w.left + w.width for w in line_words)
@@ -539,8 +468,6 @@ def _line_box(line_words: list[OcrWord], size) -> tuple[int, int, int, int] | No
     return _clamp_box((x0 - pad, y0 - pad, x1 + pad, y1 + pad), size)
 
 
-
-# Images OCR'd at once, decided per machine (see default_ocr_workers).
 OCR_WORKERS = default_ocr_workers()
 
 _CROP_POOL: ThreadPoolExecutor | None = None
@@ -548,11 +475,6 @@ _CROP_POOL_LOCK = threading.Lock()
 
 
 def _crop_pool() -> ThreadPoolExecutor:
-    """Shared pool for re-reading crops of one image in parallel.
-
-    Separate from the per-page pools (a page task waiting on its own pool could
-    deadlock), and shared so all images together stay within OCR_WORKERS extra calls.
-    """
     global _CROP_POOL
     with _CROP_POOL_LOCK:
         if _CROP_POOL is None:

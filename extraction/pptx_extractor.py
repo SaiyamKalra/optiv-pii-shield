@@ -1,5 +1,3 @@
-# extraction/pptx_extractor.py
-
 import logging
 from functools import partial
 from pathlib import Path
@@ -27,7 +25,6 @@ logger = logging.getLogger("PptxExtractor")
 
 DIAGRAM_URI = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-# Errors python-pptx raises on malformed shapes; the shape is reported, not fatal.
 SHAPE_ERRORS = (AttributeError, KeyError, ValueError, TypeError, ElementTree.ParseError)
 
 
@@ -44,7 +41,6 @@ def _reading_order(shapes) -> list:
 
 
 def _image_ref(shape) -> str:
-    """The picture's part name inside the package, e.g. '/ppt/media/image1.png'."""
     try:
         rid = shape._element.blip_rId
         return str(shape.part.related_part(rid).partname)
@@ -53,7 +49,6 @@ def _image_ref(shape) -> str:
 
 
 def _to_slide(shape, img_size, x0, y0, x1, y1) -> tuple[float, float, float, float]:
-    """Map an image-pixel box to slide points, accounting for cropping of the picture."""
     img_w, img_h = img_size
     crop_l, crop_r = shape.crop_left or 0.0, shape.crop_right or 0.0
     crop_t, crop_b = shape.crop_top or 0.0, shape.crop_bottom or 0.0
@@ -91,7 +86,6 @@ def _add_picture(shape, builder: PageTextBuilder, cache: ImageOcrCache, in_group
 
     ref = _image_ref(shape)
     outcome = cache.ocr(ref, shape.image.blob, display_width_pt=width)
-    # Group members use the group's own coordinate space, so fall back to image pixels.
     on_slide = not in_group and None not in (shape.left, shape.top, width, height)
     if on_slide and outcome.size:
         place = partial(_word_on_slide, shape, outcome.size)
@@ -99,7 +93,6 @@ def _add_picture(shape, builder: PageTextBuilder, cache: ImageOcrCache, in_group
         coord_space = "page_pt"
     else:
         place, place_box, coord_space = _word_in_image, _box_in_image, "image_px"
-    # If the picture can't be read at all, report its whole area on the slide.
     whole = (_pt(shape.left), _pt(shape.top), width, height) if on_slide else None
     record_image_outcome(
         builder, outcome, ref, place, place_box,
@@ -113,7 +106,6 @@ def _graphic_data(shape):
 
 
 def _add_graphic_frame(shape, builder: PageTextBuilder):
-    """Charts and SmartArt hold visible text in their own parts; OLE objects are flagged."""
     if getattr(shape, "has_chart", False) and shape.has_chart:
         builder.add_text(drawing_part_text(shape.chart_part.blob))
         builder.end_block()
@@ -158,7 +150,7 @@ def _add_shape(shape, builder: PageTextBuilder, cache: ImageOcrCache, in_group=F
         builder.end_block()
         return
 
-    if _graphic_data(shape) is not None:  # chart, SmartArt or OLE object
+    if _graphic_data(shape) is not None:
         _add_graphic_frame(shape, builder)
 
     if getattr(shape, "has_text_frame", False) and shape.has_text_frame:
@@ -176,7 +168,6 @@ def _add_shape(shape, builder: PageTextBuilder, cache: ImageOcrCache, in_group=F
 
 
 def _comment_text(blob: bytes) -> list[str]:
-    """Text of each comment in a legacy or modern PowerPoint comments part."""
     try:
         root = ElementTree.fromstring(blob)
     except ElementTree.ParseError:
@@ -223,13 +214,6 @@ def extract_pptx(
     user_id: str | None = None,
     ocr_engine: OcrEngine | None = None,
 ) -> list[ExtractionInput]:
-    """Extract a PPTX into one ExtractionInput per slide, OCR'ing every picture.
-
-    Slide text, tables, charts, SmartArt and speaker notes are read natively (no word
-    boxes). OCR boxes from pictures are in slide points, or image pixels for pictures
-    in groups. Comments, alt text, document properties and embedded objects go to
-    hidden_content. Raises DocumentValidationError if the file isn't a readable PPTX.
-    """
     path = Path(path)
     if validate_document(path) != "pptx":
         raise DocumentValidationError("unsupported_type", f"{path.name} is not a PPTX")

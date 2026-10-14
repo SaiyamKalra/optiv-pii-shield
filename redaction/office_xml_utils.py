@@ -1,11 +1,3 @@
-"""Redact a DOCX/PPTX package: mask PII text in its XML parts and black out PII
-(and ink OCR could not read) inside its embedded images.
-
-lxml is used instead of ElementTree because ElementTree renames namespace prefixes
-and drops unused declarations, which breaks mc:Ignorable and makes Word/PowerPoint
-report the file as corrupt.
-"""
-
 import io
 import posixpath
 import re
@@ -15,16 +7,13 @@ from lxml import etree
 from PIL import Image, ImageDraw
 
 MASK_CHAR = "█"
-MIN_VALUE_LEN = 3  # shorter "values" (e.g. a lone initial) would wreck the document
+MIN_VALUE_LEN = 3
 IMAGE_PAD_PX = 2
-# Text nodes that hold visible run text, joined per paragraph so PII split across
-# runs (e.g. "John" in bold + " Smith") is still found.
 RUN_TEXT_TAGS = {"t", "delText", "instrText"}
 BREAK_TAGS = {"br", "cr", "tab"}
-TEXT_ATTRIBUTES = {"descr", "title"}  # alt text on pictures and shapes
+TEXT_ATTRIBUTES = {"descr", "title"}
 SAVABLE_IMAGE_FORMATS = {"PNG", "JPEG", "GIF", "BMP", "TIFF", "WEBP"}
 CONTENT_TYPES = "[Content_Types].xml"
-# Model-based entity types; anything else (regex recognizers) is a structured identifier.
 NER_ENTITY_TYPES = {"PERSON", "ORGANIZATION", "LOCATION", "NRP", "GPE", "DATE_TIME", "MISC"}
 
 _PARSER = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=True)
@@ -35,16 +24,11 @@ def _local(tag) -> str:
 
 
 def value_pieces(value: str) -> list[str]:
-    """Split a detected value where extraction joined separate XML elements: table
-    cells (" | ") and lines/paragraphs. Each piece is matched on its own."""
     pieces = (" ".join(piece.split()) for piece in re.split(r"\s*\|\s*|\n", str(value)))
     return [piece for piece in pieces if len(piece) >= MIN_VALUE_LEN]
 
 
 def pii_terms(pii_results) -> list[tuple[str, bool]]:
-    """(value piece, ignore_case) to mask, longest first. NER values match case-
-    sensitively: one bogus "AND" ORGANIZATION must not blank every "and" in the file.
-    Structured identifiers (emails, IDs) match in any case."""
     terms: dict[str, bool] = {}
     for result in pii_results:
         for entity in result.detected_entities:
@@ -55,7 +39,6 @@ def pii_terms(pii_results) -> list[tuple[str, bool]]:
 
 
 def pii_values(pii_results) -> list[str]:
-    """Distinct detected values (split into pieces), longest first."""
     values = {
         piece
         for result in pii_results
@@ -67,11 +50,6 @@ def pii_values(pii_results) -> list[str]:
 
 
 class ValueMatcher:
-    """Finds detected values in text. Case-insensitive; whitespace inside a value
-    matches any whitespace (raw_text joins words with single spaces); a value never
-    matches inside a longer word. Each value is searched on its own, so overlapping
-    values ("Retain the" and "the Vendor") are both found."""
-
     def __init__(self, values: list[str | tuple[str, bool]]):
         self.patterns = []
         for value in values:
@@ -86,12 +64,10 @@ class ValueMatcher:
 
 
 def value_pattern(values: list[str | tuple[str, bool]]) -> ValueMatcher | None:
-    """Plain strings match in any case; (value, ignore_case) pairs as given."""
     return ValueMatcher(values) if values else None
 
 
 def mask_text(text: str | None, matcher: ValueMatcher | None) -> tuple[str | None, int]:
-    """Replace every match with block characters of the same length."""
     if not text or matcher is None:
         return text, 0
     spans = matcher.spans(text)
@@ -114,16 +90,10 @@ def _serialize(tree) -> bytes:
 
 
 def redact_xml(data: bytes, pattern: ValueMatcher | None) -> tuple[bytes, int]:
-    """Mask PII in one XML part. Returns the original bytes if nothing changed."""
     tree = etree.parse(io.BytesIO(data), _PARSER)
     root = tree.getroot()
     count = 0
 
-    # Run text of the whole part in document order, "\n" between paragraphs. Extraction
-    # joins runs, paragraphs and table cells with spaces, so a detected value can span
-    # several elements (e.g. "T. Lindqvist" + "CIO" in two paragraphs of one cell);
-    # the pattern's \s+ matches across those breaks.
-    # Line breaks and tabs (<w:br/>, <a:br/>, <w:tab/>) hold no text but separate words.
     nodes, last_paragraph = [], None
     for node in root.iter():
         name = _local(node.tag)
@@ -135,7 +105,7 @@ def redact_xml(data: bytes, pattern: ValueMatcher | None) -> tuple[bytes, int]:
             continue
         paragraph = next((a for a in node.iterancestors() if _local(a.tag) == "p"), None)
         if nodes and nodes[-1] is not None and paragraph is not last_paragraph:
-            nodes.append(None)  # paragraph break
+            nodes.append(None)
         nodes.append(node)
         last_paragraph = paragraph
     if nodes:
@@ -153,7 +123,7 @@ def redact_xml(data: bytes, pattern: ValueMatcher | None) -> tuple[bytes, int]:
 
     external_rel = _local(root.tag) == "Relationships"
     for node in root.iter():
-        if not isinstance(node.tag, str):  # comments, processing instructions
+        if not isinstance(node.tag, str):
             continue
         node.text, replaced = mask_text(node.text, pattern)
         count += replaced
@@ -177,11 +147,6 @@ def redact_xml(data: bytes, pattern: ValueMatcher | None) -> tuple[bytes, int]:
 def redact_image(
     data: bytes, boxes: list[tuple[float, float, float, float] | None]
 ) -> tuple[bytes, str]:
-    """Black out pixel boxes (x, y, w, h); None means the whole image.
-
-    Returns (bytes, format). Formats Pillow can read but not write (EMF/WMF) come back
-    as PNG, rendered at the same size the OCR saw, so the boxes still line up.
-    """
     img = Image.open(io.BytesIO(data))
     img.load()
     fmt = img.format if img.format in SAVABLE_IMAGE_FORMATS else "PNG"
@@ -226,9 +191,7 @@ def _renamed_part(name: str, taken: set[str]) -> str:
 
 
 def _retarget_rels(data: bytes, rels_name: str, renames: dict[str, str]) -> bytes:
-    """Point relationships at renamed parts (e.g. image1.emf -> image1_redacted.png)."""
     tree = etree.parse(io.BytesIO(data), _PARSER)
-    # word/_rels/document.xml.rels holds targets relative to word/
     base = posixpath.dirname(posixpath.dirname(rels_name))
     changed = False
     for rel in tree.getroot():
@@ -245,7 +208,6 @@ def _retarget_rels(data: bytes, rels_name: str, renames: dict[str, str]) -> byte
 
 
 def _content_types_with_png(data: bytes, renames: dict[str, str]) -> bytes:
-    """Declare PNG and drop overrides for parts that were renamed."""
     tree = etree.parse(io.BytesIO(data), _PARSER)
     root = tree.getroot()
     ns = root.nsmap.get(None)
@@ -274,11 +236,6 @@ def redact_office_archive(
     values: list[str | tuple[str, bool]],
     image_boxes: dict[str, list[tuple[float, float, float, float] | None]],
 ) -> dict:
-    """Write a redacted copy of the package.
-
-    image_boxes maps an image part name (e.g. '/word/media/image3.png') to the pixel
-    boxes to black out. Returns counts plus the image parts that could not be edited.
-    """
     pattern = value_pattern(values)
     wanted_images = {ref.lstrip("/"): boxes for ref, boxes in image_boxes.items() if boxes}
     text_replacements = 0
@@ -293,7 +250,6 @@ def redact_office_archive(
             raise ValueError("Office package contains duplicate part names.")
         parts = [(item, original.read(item.filename)) for item in original.infolist()]
 
-    # Images first: one Pillow can read but not write is saved as PNG under a new name.
     renames: dict[str, str] = {}
     new_images: dict[str, bytes] = {}
     for item, data in parts:

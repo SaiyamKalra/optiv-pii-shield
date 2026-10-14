@@ -1,0 +1,169 @@
+{
+  "generated_at": "2026-10-14 07:05 UTC",
+  "ground_truth": "tests/fixtures/cadence_ground_truth.json",
+  "documents": [
+    {
+      "file": "Cadence_Group_Risk_Management_Policy__v6.0.pdf",
+      "format": "PDF",
+      "pages": 35,
+      "seconds": {
+        "extraction": 35.3,
+        "detection": 21.3
+      },
+      "extraction": {
+        "identifiers_found": "110/117",
+        "identifier_recall": 0.9402,
+        "rows_intact": "7/8",
+        "row_integrity": 0.875,
+        "images_ocr": 35,
+        "images_skipped": 0,
+        "images_decorative": 0,
+        "low_confidence_words": 249,
+        "pages_with_low_confidence": 31,
+        "unread_regions": 29,
+        "extraction_errors": 0
+      },
+      "detection": {
+        "findings": 899,
+        "true_positives": 896,
+        "false_positives": 3,
+        "precision": 0.9967,
+        "identifiers": 117,
+        "identifier_recall": 0.9573,
+        "identifiers_missed_extraction": 5,
+        "identifiers_missed_detection": 0,
+        "identifiers_partial": 0,
+        "names": 261,
+        "names_covered": 260,
+        "name_recall": 0.9962,
+        "by_type": {
+          "PERSON": 398,
+          "EMPLOYEE_ID": 175,
+          "EMAIL_ADDRESS": 159,
+          "PHONE_NUMBER": 132,
+          "DIRECTOR_ID": 11,
+          "STREET_ADDRESS": 8,
+          "VENDOR_ID": 5,
+          "PAN": 4,
+          "US_SSN": 3,
+          "DATE_OF_BIRTH": 2,
+          "PASSPORT": 1,
+          "NATIONAL_ID": 1
+        },
+        "false_positives_by_type": {
+          "STREET_ADDRESS": 2,
+          "PERSON": 1
+        }
+      },
+      "words": {
+        "tp": 1814,
+        "fp": 9,
+        "fn": 16,
+        "tn": 15660,
+        "precision": 0.9951,
+        "recall": 0.9913,
+        "f1": 0.9932
+      }
+    },
+    {
+      "file": "Cadence_Financial_Group_Organizational_Pack.pptx",
+      "format": "PPTX",
+      "pages": 9,
+      "seconds": {
+        "extraction": 0.5,
+        "detection": 2.0
+      },
+      "extraction": {
+        "identifiers_found": "12/12",
+        "identifier_recall": 1.0,
+        "rows_intact": "3/3",
+        "row_integrity": 1.0,
+        "images_ocr": 0,
+        "images_skipped": 0,
+        "images_decorative": 9,
+        "low_confidence_words": 0,
+        "pages_with_low_confidence": 0,
+        "unread_regions": 0,
+        "extraction_errors": 0
+      },
+      "detection": {
+        "findings": 124,
+        "true_positives": 123,
+        "false_positives": 1,
+        "precision": 0.9919,
+        "identifiers": 12,
+        "identifier_recall": 1.0,
+        "identifiers_missed_extraction": 0,
+        "identifiers_missed_detection": 0,
+        "identifiers_partial": 0,
+        "names": 42,
+        "names_covered": 42,
+        "name_recall": 1.0,
+        "by_type": {
+          "PERSON": 56,
+          "EMAIL_ADDRESS": 34,
+          "PHONE_NUMBER": 34
+        },
+        "false_positives_by_type": {
+          "PERSON": 1
+        }
+      },
+      "words": {
+        "tp": 249,
+        "fp": 1,
+        "fn": 0,
+        "tn": 1158,
+        "precision": 0.996,
+        "recall": 1.0,
+        "f1": 0.998
+      }
+    },
+    {
+      "file": "Cadence_TPRM_Training.docx",
+      "format": "DOCX",
+      "pages": 76,
+      "seconds": {
+        "extraction": 22.8,
+        "detection": 22.6
+      },
+      "extraction": {
+        "text_found": "5/5",
+        "images_ocr": 40,
+        "images_skipped": 5,
+        "images_decorative": 0,
+        "low_confidence_words": 236,
+        "pages_with_low_confidence": 23,
+        "unread_regions": 155,
+        "extraction_errors": 0
+      },
+      "detection": {
+        "findings": 43,
+        "true_positives": 43,
+        "false_positives": 0,
+        "precision": 1.0,
+        "identifiers": 0,
+        "identifier_recall": null,
+        "identifiers_missed_extraction": 0,
+        "identifiers_missed_detection": 0,
+        "identifiers_partial": 0,
+        "names": 46,
+        "names_covered": 45,
+        "name_recall": 0.9783,
+        "by_type": {
+          "PERSON": 43
+        },
+        "false_positives_by_type": {}
+      },
+      "words": {
+        "tp": 90,
+        "fp": 0,
+        "fn": 2,
+        "tn": 17530,
+        "precision": 1.0,
+        "recall": 0.9783,
+        "f1": 0.989
+      }
+    }
+  ],
+  "skipped": []
+}
