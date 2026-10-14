@@ -1,7 +1,3 @@
-# tests/test_markdown_tables.py
-"""Tables in the token-optimised Markdown: rebuilt from OCR word positions (scanned
-PDFs) or from "a | b" rows (DOCX/PPTX), with PII replaced by tokens."""
-
 import sys
 from pathlib import Path
 
@@ -15,11 +11,10 @@ from redaction.token_redaction.markdown_tables import (
 )
 from redaction.token_redaction.token_optimizer import TokenOptimizer
 
-SIZE = 8.0  # word height in points
+SIZE = 8.0
 
 
 def _chunk(rows: list[list[tuple[float, str]]], gap_y: float = 4.0) -> ExtractionInput:
-    """A page of OCR words: rows of (x, word); each row is one raw_text line."""
     text, boxes, y = "", [], 100.0
     for row in rows:
         for i, (x, word) in enumerate(row):
@@ -37,7 +32,6 @@ def _chunk(rows: list[list[tuple[float, str]]], gap_y: float = 4.0) -> Extractio
 
 
 def _output(chunk: ExtractionInput, values: dict[str, str]) -> PIIOutput:
-    """Findings for each value (-> token) wherever it occurs in the page text."""
     found = []
     for value, token in values.items():
         start = chunk.raw_text.find(value)
@@ -56,7 +50,7 @@ TABLE = [
     [(10, "NAME"), (120, "ROLE"), (240, "OFFICE")],
     [(10, "Naomi"), (34, "Osadebe"), (120, "IAM"), (136, "Engineer"), (240, "New"), (256, "York")],
     [(10, "Tobias"), (38, "Lindqvist"), (120, "Head,"), (144, "Enterprise"), (240, "London")],
-    [(120, "Risk"), (140, "Framework")],  # wrapped cell: continues the row above
+    [(120, "Risk"), (140, "Framework")],
     [(10, "Helena"), (38, "Vorstermann"), (120, "Chief"), (144, "Privacy"), (240, "London")],
 ]
 
@@ -96,7 +90,6 @@ def test_pii_in_cells_becomes_tokens_and_never_appears():
 
 
 def test_known_value_missed_in_one_place_is_still_tokenized():
-    # Detected on page 1; on page 2 the same number wraps and was not detected.
     p1 = PIIOutput(file_id="f", file_name="t.docx", page_number=1, status="SUCCESS",
                    sanitized_text="Call [PHONE_001]", verification_passed=True,
                    detected_entities=[DetectedEntityDetail(token="[PHONE_001]", entity_type="PHONE_NUMBER",

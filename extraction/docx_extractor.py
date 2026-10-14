@@ -1,5 +1,3 @@
-# extraction/docx_extractor.py
-
 import logging
 import zipfile
 from pathlib import Path
@@ -48,12 +46,10 @@ DGM_REL_IDS = "{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds"
 R_DM = qn("r:dm")
 O_OLE_OBJECT = "{urn:schemas-microsoft-com:office:office}OLEObject"
 NOTE_KINDS = {"comments": "comment", "footnotes": "footnote", "endnotes": "endnote"}
-# Errors python-docx/lxml raise on malformed content; reported per block, not fatal.
 BLOCK_ERRORS = (AttributeError, KeyError, ValueError, TypeError, etree.XMLSyntaxError)
 
 
 def _load_notes(document) -> dict[str, dict[str, str]]:
-    """Comment, footnote and endnote text keyed by kind then id."""
     notes: dict[str, dict[str, str]] = {kind: {} for kind in NOTE_KINDS.values()}
     for rel in document.part.rels.values():
         if rel.is_external:
@@ -66,7 +62,7 @@ def _load_notes(document) -> dict[str, dict[str, str]]:
         for note in root:
             text = " ".join(t.text for t in note.iter(W_T) if t.text).strip()
             if not text:
-                continue  # Word's separator footnotes have no text
+                continue
             author = note.get(W_AUTHOR)
             notes[kind][note.get(W_ID)] = f"{author}: {text}" if author else text
     return notes
@@ -79,14 +75,12 @@ def _has_page_break(element) -> bool:
 
 
 def _breaks_before(paragraph) -> bool:
-    """Paragraph formatted with 'page break before' (w:pPr/w:pageBreakBefore)."""
     ppr = paragraph.find(W_PPR)
     flag = ppr.find(W_PAGE_BREAK_BEFORE) if ppr is not None else None
     return flag is not None and flag.get(W_VAL) not in ("0", "false", "off")
 
 
 def _body_images(document) -> list[tuple[str, bytes, float | None]]:
-    """(ref, blob, display width) for every large-enough image in the body, for prefetch."""
     part = document.part
     items = {}
     for drawing in document.element.body.iter(W_DRAWING, W_PICT):
@@ -113,13 +107,6 @@ def _box_in_image(box):
 
 
 class _DocxWalker:
-    """Walks the document XML in reading order, splitting pages on Word's saved page breaks.
-
-    DOCX has no fixed pages: Word records where it last broke pages
-    (w:lastRenderedPageBreak) and explicit breaks (w:br type="page"). Page numbers
-    therefore approximate what Word showed when the file was last saved.
-    """
-
     def __init__(self, document, ocr_engine: OcrEngine, cache: ImageOcrCache):
         self.document = document
         self.threshold = ocr_engine.low_conf_threshold
@@ -132,7 +119,6 @@ class _DocxWalker:
         self.notes = _load_notes(document)
         self.notes_used: set[tuple[str, str]] = set()
 
-    # --- page and text buffering -------------------------------------------------
     def flush(self):
         if self.buffer:
             self.current.add_text("".join(self.buffer))
@@ -153,10 +139,10 @@ class _DocxWalker:
 
     def page_break(self, from_table_row=False):
         if self.table_depth and not from_table_row:
-            return  # inside tables, breaks are applied once per row (see walk_table)
+            return
         self.flush()
         if not self._has_content():
-            return  # consecutive break markers: don't create blank pages
+            return
         self.current.end_block()
         self.pages.append(self.current)
         self.current = PageTextBuilder(len(self.pages) + 1, self.threshold)
@@ -165,14 +151,12 @@ class _DocxWalker:
         self.flush()
         if self._has_content() or not self.pages:
             self.pages.append(self.current)
-        # Notes whose reference wasn't found in the body (e.g. in a header) go to page 1.
         for kind, by_id in self.notes.items():
             for note_id, text in by_id.items():
                 if (kind, note_id) not in self.notes_used:
                     self.pages[0].add_hidden(kind, text, f"{kind} {note_id}")
         return self.pages
 
-    # --- block level -------------------------------------------------------------
     def walk_blocks(self, parent, inline=False):
         for child in parent.iterchildren():
             try:
@@ -203,9 +187,7 @@ class _DocxWalker:
         previous_row_broke = False
         for row in tbl.iter(W_TR):
             if row.getparent() is not tbl:
-                continue  # nested tables are walked through their cell
-            # A row split across pages carries break markers in its continuing cells, and
-            # Word marks the first cell of the next row too: treat that as one break.
+                continue
             row_breaks = self.table_depth == 1 and _has_page_break(row)
             if row_breaks and not previous_row_broke:
                 self.page_break(from_table_row=True)
@@ -219,12 +201,11 @@ class _DocxWalker:
         self.table_depth -= 1
         self.current.end_block()
 
-    # --- inside a paragraph ------------------------------------------------------
     def walk_inline(self, element, part):
         for child in element.iterchildren():
             tag = child.tag
             if tag == MC_FALLBACK:
-                continue  # legacy duplicate of the mc:Choice content
+                continue
             if tag == W_T:
                 self.buffer.append(child.text or "")
             elif tag == W_DEL_TEXT:
@@ -254,16 +235,15 @@ class _DocxWalker:
                 self.flush()
                 self.add_drawing_text(child, part)
                 self.add_images(child, part)
-                self.walk_inline(child, part)  # text boxes inside drawings
+                self.walk_inline(child, part)
             elif tag == W_P:
-                self.walk_inline(child, part)  # paragraphs inside text boxes
+                self.walk_inline(child, part)
                 self.flush()
                 self.current.end_line()
             else:
                 self.walk_inline(child, part)
 
     def add_drawing_text(self, drawing, part):
-        """Alt text (hidden) plus chart and SmartArt labels (visible, stored in other parts)."""
         part = part or self.document.part
         doc_pr = next(drawing.iter(WP_DOC_PR), None)
         if doc_pr is not None:
@@ -299,16 +279,12 @@ class _DocxWalker:
             if outcome.status not in ("ok", "decorative"):
                 logger.info("Page %d: image %s not OCR'd (%s)",
                             self.current.page_number, ref, outcome.status)
-            # DOCX images have no fixed page position: boxes are image pixels, and an
-            # unreadable image is reported as a whole (w = h = 0 means "entire image").
             record_image_outcome(
                 self.current, outcome, ref, _place_in_image, _box_in_image,
                 coord_space="image_px", whole_image=(0.0, 0.0, 0.0, 0.0),
             )
 
-    # --- headers and footers -----------------------------------------------------
     def walk_headers_footers(self):
-        """Add header/footer text once, at the start of page 1 (it repeats on every page)."""
         seen = set()
         for section in self.document.sections:
             for hf in (
@@ -333,14 +309,6 @@ def extract_docx(
     user_id: str | None = None,
     ocr_engine: OcrEngine | None = None,
 ) -> list[ExtractionInput]:
-    """Extract a DOCX into approximate pages, OCR'ing every embedded image.
-
-    Text, tables, text boxes, headers/footers, charts and SmartArt are read natively
-    (no word boxes). OCR words get boxes in image pixels (coord_space="image_px") with
-    image_ref naming the image part. Comments, footnotes, endnotes, tracked deletions,
-    alt text, document properties and embedded objects go to hidden_content.
-    Raises DocumentValidationError if the file isn't a readable DOCX.
-    """
     path = Path(path)
     if validate_document(path) != "docx":
         raise DocumentValidationError("unsupported_type", f"{path.name} is not a DOCX")

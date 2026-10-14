@@ -50,7 +50,6 @@ def test_findings_layer_marks_the_words_of_the_finding(rotation):
 
     helena = next(b for b in chunk.bounding_boxes if b.text == "Helena")
     contact = next(b for b in chunk.bounding_boxes if b.text == "Contact")
-    # Sample just inside the box edge, where the outline is drawn.
     x, y = _center(helena, matrix)
     assert drawn.size == img.size
     changed = sum(
@@ -88,7 +87,7 @@ def test_uncertainty_layer_marks_low_confidence_words_and_unread_regions():
 def test_uncertain_word_rule_matches_the_extractor():
     _, chunk = _pdf()
     box = chunk.bounding_boxes[0]
-    assert not is_uncertain_word(box)  # native text
+    assert not is_uncertain_word(box)
     assert is_uncertain_word(box.model_copy(update={"source": "ocr", "confidence": 40.0}))
     assert not is_uncertain_word(box.model_copy(update={"source": "ocr", "confidence": 90.0}))
     assert not is_uncertain_word(

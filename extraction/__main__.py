@@ -1,7 +1,3 @@
-# extraction/__main__.py
-"""python -m extraction <file.pdf|.docx|.pptx> [--show-text] [--show-hidden] [--pages 1,2]
-                       [--save-chunks FILE] [--list-images]"""
-
 import argparse
 import logging
 import sys
@@ -20,7 +16,6 @@ from extraction.validation import DocumentValidationError, validate_document
 
 
 def list_images(path: Path):
-    """Print every embedded image's SHA-256, for adding logos to decorative_images.json."""
     kind = validate_document(path)
     known = decorative_hashes()
     rows = []

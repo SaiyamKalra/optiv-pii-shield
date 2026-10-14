@@ -1,20 +1,3 @@
-"""Redact and verify DOCX/PPTX files.
-
-Flow: redact the package (mask PII text by value, black out PII and unread ink in
-images), then extract the saved file again and re-run detection. Anything the
-rescan still finds is redacted in another pass (up to MAX_PASSES). The file is
-VERIFIED only if the last rescan finds nothing.
-
-After the last pass, what the rescan still finds is judged:
-- a structured identifier (email, phone, SSN, IDs...) or a value that was already
-  masked once -> BLOCKED (masking failed or real PII remains);
-- only NER guesses (PERSON/ORGANIZATION/LOCATION...) on text that masking has
-  garbled ("Primary ███ Contact", "Template details") -> REVIEW_REQUIRED.
-  Each pass creates new garbled text, so these never fully converge. The same goes
-  for NER guesses read only from images: Tesseract reads the black boxes themselves
-  as "EEE"/"HEB", so those reappear after every pass.
-"""
-
 import shutil
 import tempfile
 from pathlib import Path
@@ -37,9 +20,6 @@ MAX_PASSES = 2
 
 
 def scan_chunks(chunks: list[ExtractionInput]) -> list[ExtractionInput]:
-    """Chunks for detection: visible text plus the page's hidden content
-    (metadata, comments, deleted text, alt text...), appended after raw_text so
-    offsets of visible words are unchanged."""
     scanned = []
     for chunk in chunks:
         hidden = "\n".join(item.text for item in chunk.hidden_content if item.text)
@@ -49,14 +29,11 @@ def scan_chunks(chunks: list[ExtractionInput]) -> list[ExtractionInput]:
 
 
 def _finding_image_refs(chunks, pii_results) -> set[str]:
-    """Images that hold OCR words of a finding (their redaction must not fail)."""
     no_unread = [c.model_copy(update={"unread_regions": []}) for c in chunks]
     return set(image_boxes_to_redact(no_unread, pii_results))
 
 
 def _is_mask_guess(finding) -> bool:
-    """An NER guess about our own masking ("the ████" tagged as a place). Masking it
-    would only blank more real words and create new guesses, pass after pass."""
     return finding.entity_type in NER_ENTITY_TYPES and MASK_CHAR in finding.original_value
 
 
@@ -70,10 +47,8 @@ def _without_mask_guesses(results: list[PIIOutput]) -> list[PIIOutput]:
 
 
 def _only_ocr(chunks, page_number: int, finding) -> bool:
-    """True if every character of the finding comes from OCR'd image words (native
-    DOCX/PPTX text has no word boxes)."""
     chunk = next((c for c in chunks if c.page_number == page_number), None)
-    if chunk is None or finding.end > len(chunk.raw_text):  # hidden content
+    if chunk is None or finding.end > len(chunk.raw_text):
         return False
     covered = set()
     for box in chunk.bounding_boxes or []:
@@ -107,9 +82,6 @@ class OfficeRedactionPipeline:
         self.extractor = extractor
 
     def _detect(self, chunks):
-        """Detection gives the same result for the same text, so only pages whose
-        text changed since an earlier scan are detected again (detection is ~1 s a
-        page; extraction of the saved file is always fresh)."""
         scanned = scan_chunks(chunks)
         todo = [c for c in scanned if c.raw_text not in self._seen]
         if todo:
@@ -210,8 +182,6 @@ class OfficeRedactionPipeline:
             rescan_issues, rescan_warnings = _inspect(current_chunks, "rescan")
             issues += rescan_issues
             warnings += rescan_warnings
-            # Not RedactionVerifier: it rejects blank pages/slides, which the PII
-            # pipeline marks FLAGGED_FOR_REVIEW even though there is nothing to find.
             result["verification_passed"] = len(rescanned_results) == len(chunks) and all(
                 r.verification_passed and not r.detected_entities for r in rescanned_results
             )

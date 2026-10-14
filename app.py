@@ -1,15 +1,9 @@
-"""
-PII Sentinel — Frontend
-Run:  streamlit run app.py
-"""
-
 import tempfile
 import time
 import warnings
 from collections import Counter
 from pathlib import Path
 
-# Suppress PyTorch/HuggingFace startup warnings
 warnings.filterwarnings("ignore")
 
 import pandas as pd
@@ -17,6 +11,7 @@ import plotly.express as px
 import pymupdf
 import streamlit as st
 
+from analytics.accuracy import load_report, summarize_report
 from analytics.metrics import get_conversion_matrix, reading_coverage
 from extraction.normalizer import extract_document
 from extraction.pdf_extractor import extract_pdf
@@ -28,7 +23,6 @@ from ui import components as ui
 from ui.evidence import attention, build_trail
 from ui.page_view import page_overlay, page_uncertainty, rasterize
 
-# ── 1. PAGE CONFIGURATION (MUST BE FIRST STREAMLIT COMMAND) ────────────────
 st.set_page_config(
     page_title="PII Sentinel",
     page_icon="▮",
@@ -39,7 +33,6 @@ st.set_page_config(
 THEME_CSS = Path(__file__).with_name("ui") / "theme.css"
 st.markdown(f"<style>{THEME_CSS.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
-# ── 2. PIPELINE ────────────────────────────────────────────────────────────
 DETECTORS = {
     "PERSON": "spaCy NER + name filter",
     "EMAIL_ADDRESS": "CorpEmail recognizer",
@@ -75,10 +68,6 @@ VIEWER_DPI = 110
 
 
 def _run_real_pipeline(uploaded, on_stage=None) -> dict:
-    """Run extraction, PII detection, redaction and verification (PDF, DOCX, PPTX).
-
-    on_stage(i) is called when stage PIPELINE_STAGES[i] starts, so the UI shows the
-    real progress instead of fixed timers."""
     def stage(i):
         if on_stage is not None:
             on_stage(i)
@@ -114,10 +103,8 @@ def _run_real_pipeline(uploaded, on_stage=None) -> dict:
             with pymupdf.open(input_path) as document:
                 page_count = len(document)
         else:
-            # Validates the file by content, then picks the DOCX or PPTX extractor.
             stage(0)
             chunks = extract_document(input_path)
-            # Office files also carry hidden text (metadata, comments, notes...).
             stage(1)
             original_results = pii_pipeline.process_document_chunks(scan_chunks(chunks))
             stage(2)
@@ -205,14 +192,12 @@ def _run_real_pipeline(uploaded, on_stage=None) -> dict:
             "extracted_chunks": chunks,
             "pii_outputs": original_results,
             "total_words": total_words,
-            # Words and unread regions OCR/extraction could not vouch for count against it.
             "reliable_words": coverage["reliable"],
             "coverage_total": coverage["total"],
             "coverage": coverage,
         }
 
 
-# ── 3. STATE & VERDICT ─────────────────────────────────────────────────────
 for key, default in (("res", None), ("screen", "intake"), ("thr", 0.70), ("viewer_page", 1)):
     if key not in st.session_state:
         st.session_state[key] = default
@@ -221,7 +206,6 @@ COVERAGE_REQUIRED_PCT = 95.0
 
 
 def verdict(res, thr):
-    """Return (state, low_confidence_count, word_coverage_pct)."""
     df = res.get("findings")
     review = 0
     if df is not None and "Confidence" in df.columns:
@@ -259,7 +243,6 @@ def _token_optimizer() -> TokenOptimizer:
 
 
 def _llm_markdown(res: dict) -> str:
-    """Built once per document (the optimizer loads a language model)."""
     if res.get("markdown") is None:
         raw_chunks = res.get("extracted_chunks") or []
         raw_text = "\n".join(c.raw_text for c in raw_chunks if c.raw_text)
@@ -269,7 +252,7 @@ def _llm_markdown(res: dict) -> str:
     return res["markdown"]
 
 
-def _paper_chart(fig, title: str):
+def _paper_chart(fig, title: str, legend: bool = False):
     fig.update_layout(
         template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -278,32 +261,73 @@ def _paper_chart(fig, title: str):
                                        "color": "#1b1b1b"}},
         font={"family": "IBM Plex Mono, Consolas, monospace", "color": "#4a4740", "size": 12},
         margin={"l": 10, "r": 10, "t": 50, "b": 10},
-        showlegend=False,
+        showlegend=legend,
+        legend={"orientation": "h", "y": -0.15, "x": 0, "title": None},
     )
     fig.update_xaxes(gridcolor="#d8d1c2", linecolor="#1b1b1b")
     fig.update_yaxes(gridcolor="#d8d1c2", linecolor="#1b1b1b")
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
-# ── 4. MASTHEAD ────────────────────────────────────────────────────────────
-head, action = st.columns([5, 1], vertical_alignment="center")
+head, nav_accuracy, nav_main = st.columns([4, 1.2, 1.2], vertical_alignment="center")
 with head:
     st.markdown(ui.masthead(), unsafe_allow_html=True)
-with action:
-    if st.session_state.res is not None:
-        if st.session_state.screen == "case":
-            if st.button("Analyse another file", use_container_width=True):
-                st.session_state.screen = "intake"
-                st.rerun()
-        elif st.button("Back to results", use_container_width=True):
-            st.session_state.screen = "case"
+on_accuracy = st.session_state.screen == "accuracy"
+with nav_accuracy:
+    if st.button("Model accuracy", use_container_width=True, disabled=on_accuracy,
+                 type="primary" if on_accuracy else "secondary"):
+        st.session_state.screen = "accuracy"
+        st.rerun()
+with nav_main:
+    has_result = st.session_state.res is not None
+    if st.session_state.screen != "intake":
+        if st.button("Analyse a file", use_container_width=True):
+            st.session_state.screen = "intake"
             st.rerun()
+    elif has_result and st.button("Back to results", use_container_width=True):
+        st.session_state.screen = "case"
+        st.rerun()
 st.markdown('<div class="masthead-rule"></div>', unsafe_allow_html=True)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# SCREEN 1 — Intake
-# ════════════════════════════════════════════════════════════════════════════
+if on_accuracy:
+    report = load_report()
+    if not report or not report.get("documents"):
+        st.info("No accuracy report yet. Generate it with `python -m analytics.accuracy`.")
+        st.stop()
+    total = summarize_report(report)
+    st.markdown(ui.accuracy_heading(report, total), unsafe_allow_html=True)
+    st.markdown(ui.ledger([
+        (f"{total['precision']:.1%}", "Precision"),
+        (f"{total['identifier_recall']:.1%}", "Identifiers found"),
+        (f"{total['name_recall']:.1%}", "Names covered"),
+        (f"{total['word_f1']:.1%}", "Word-level F1"),
+        (total["false_positives"], "False positives"),
+    ]), unsafe_allow_html=True)
+
+    left, right = st.columns([3, 2], gap="large")
+    with left:
+        st.markdown("### By document")
+        st.markdown(ui.accuracy_table(report["documents"]), unsafe_allow_html=True)
+    with right:
+        rows = []
+        for doc in report["documents"]:
+            d, w = doc["detection"], doc["words"]
+            for metric, value in (("Precision", d["precision"]),
+                                  ("Recall (names + IDs)", w["recall"]),
+                                  ("F1", w["f1"])):
+                rows.append({"Document": doc["format"], "Metric": metric, "Score": value})
+        fig = px.bar(pd.DataFrame(rows), x="Document", y="Score", color="Metric", barmode="group",
+                     range_y=[0, 1.05], text_auto=".1%",
+                     color_discrete_sequence=[CHART_COLORS[0], CHART_COLORS[2], CHART_COLORS[3]])
+        fig.update_traces(textposition="outside", textfont_size=10)
+        _paper_chart(fig, "Scores per document", legend=True)
+        st.caption("Bars start at zero, so small differences are shown at their true size.")
+
+    st.markdown(ui.accuracy_notes(report, total), unsafe_allow_html=True)
+    st.stop()
+
+
 if st.session_state.screen == "intake" or st.session_state.res is None:
     left, right = st.columns([3, 2], gap="large")
 
@@ -354,9 +378,6 @@ if st.session_state.screen == "intake" or st.session_state.res is None:
     st.stop()
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# SCREEN 2 — Results
-# ════════════════════════════════════════════════════════════════════════════
 res = st.session_state.res
 thr = st.session_state.thr
 df = res["findings"].copy()
@@ -373,7 +394,6 @@ tab_verdict, tab_document, tab_findings, tab_analytics = st.tabs(
     ["Verdict", "Document", "Findings", "Analytics"]
 )
 
-# ── Verdict ────────────────────────────────────────────────────────────────
 with tab_verdict:
     left, right = st.columns([2, 3], gap="large")
     with left:
@@ -446,7 +466,6 @@ with tab_verdict:
             "before sharing it."
         )
 
-# ── Document ───────────────────────────────────────────────────────────────
 with tab_document:
     st.session_state.viewer_page = min(max(1, st.session_state.viewer_page), page_count)
     nav, layers = st.columns([1, 3], vertical_alignment="bottom")
@@ -503,7 +522,6 @@ with tab_document:
         st.markdown("#### On this page")
         st.markdown(ui.finding_rows(page_findings), unsafe_allow_html=True)
 
-# ── Findings ───────────────────────────────────────────────────────────────
 with tab_findings:
     if df.empty:
         st.info("No PII was detected in this document.")
@@ -548,7 +566,6 @@ with tab_findings:
         if selected:
             st.success(f"Page {st.session_state.viewer_page} is open in the Document tab.")
 
-# ── Analytics ──────────────────────────────────────────────────────────────
 with tab_analytics:
     raw_text = "\n".join(c.raw_text for c in chunks if c.raw_text)
     conversion = get_conversion_matrix(raw_text, outputs)

@@ -1,5 +1,3 @@
-"""Small HTML builders for the Streamlit app. Every value is escaped."""
-
 from html import escape
 
 from ui.page_view import entity_color
@@ -9,7 +7,6 @@ STAMPS = {
     "REVIEW_REQUIRED": ("review", "Review", "Some content not fully read"),
     "BLOCKED": ("held", "Held for review", "Manual check before release"),
 }
-# Release decision from app.verdict(), in plain words.
 RELEASE_LABELS = {"SAFE": "Release", "UNKNOWN": "Review first", "UNSAFE": "Hold"}
 MARKS = {"pass": "✓", "warn": "!", "fail": "!", "skip": "–", "done": "✓", "pending": "",
          "failed": "!", "active": '<span class="spinner"></span>'}
@@ -89,7 +86,6 @@ def evidence_trail(steps) -> str:
 
 
 def live_trail(stages: list[str], current: int, failed: bool, elapsed: float, file_name: str) -> str:
-    """The pipeline's real stages while it runs: done, running, waiting or failed."""
     items = []
     for i, label in enumerate(stages):
         if i < current:
@@ -104,8 +100,6 @@ def live_trail(stages: list[str], current: int, failed: bool, elapsed: float, fi
     if finished:
         clock = f"{elapsed:.0f}"
     else:
-        # The browser keeps counting while Python is busy inside a stage: a CSS counter
-        # animation, started `elapsed` seconds in (see .clock in theme.css).
         clock = f'<span class="clock" style="animation-delay:-{elapsed:.0f}s"></span>'
     return (
         f'<div class="live"><div class="live-title">{escape(title)}: '
@@ -201,8 +195,6 @@ def finding_rows(findings) -> str:
 
 
 def annotated_text(text: str, findings, visible_length: int) -> str:
-    """Page text with every finding shown as its token bar. Text after visible_length is
-    hidden content (metadata, comments...) that detection scanned after the page text."""
     def render(start: int, end: int) -> str:
         pieces, pos = [], start
         for f in sorted(findings, key=lambda f: f.start):
@@ -222,3 +214,82 @@ def annotated_text(text: str, findings, visible_length: int) -> str:
             + render(visible_length, len(text))
         )
     return html_out + "</div>"
+
+
+def _pct(value) -> str:
+    return "n/a" if value is None else f"{value:.1%}"
+
+
+def accuracy_heading(report: dict, total: dict) -> str:
+    return (
+        '<div class="intake accuracy-head"><h1>How accurate is it?</h1>'
+        f"<p>Measured on the {total['documents']} Cadence case-study documents "
+        f"({total['pages']} pages) against identifiers and names the team checked by hand. "
+        f"Every number below is a count from the full pipeline: reading, OCR and detection.</p>"
+        f'<div class="accuracy-stamp">Measured {escape(report.get("generated_at", ""))}</div></div>'
+    )
+
+
+def accuracy_table(documents: list[dict]) -> str:
+    def row(label: str, values: list[str], hint: str = "") -> str:
+        cells = "".join(f"<td>{escape(v)}</td>" for v in values)
+        hint_html = f'<div class="acc-hint">{escape(hint)}</div>' if hint else ""
+        return f"<tr><th>{escape(label)}{hint_html}</th>{cells}</tr>"
+
+    head = "".join(
+        f'<th><b>{escape(d["format"])}</b><span>{d["pages"]} pages</span></th>' for d in documents
+    )
+    det = [d["detection"] for d in documents]
+    words = [d["words"] for d in documents]
+    rows = [
+        row("Precision", [_pct(d["precision"]) for d in det],
+            "Share of findings that really are personal data"),
+        row("Identifiers found", [
+            f'{_pct(d["identifier_recall"])} ({d["identifiers"] - d["identifiers_missed_extraction"] - d["identifiers_missed_detection"]}/{d["identifiers"]})'
+            if d["identifiers"] else "none labelled" for d in det],
+            "Emails, phones, employee IDs, SSNs, passports..."),
+        row("Names covered", [f'{_pct(d["name_recall"])} ({d["names_covered"]}/{d["names"]})' for d in det],
+            "Every occurrence of every labelled full name"),
+        row("Word-level F1", [_pct(w["f1"]) for w in words],
+            "Balance of precision and recall, word by word"),
+        row("Findings / false positives", [f'{d["findings"]} / {d["false_positives"]}' for d in det]),
+        row("Missed: reading / detection", [
+            f'{d["identifiers_missed_extraction"]} / {d["identifiers_missed_detection"]}' for d in det],
+            "Where a missed identifier was lost"),
+        row("Processing time", [
+            f'{d["seconds"]["extraction"] + d["seconds"]["detection"]:.0f} s' for d in documents],
+            "Reading + detection (redaction and rescan not included)"),
+    ]
+    return f'<table class="acc-table"><thead><tr><th></th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+
+
+def accuracy_notes(report: dict, total: dict) -> str:
+    missed, at_reading = total["identifiers_missed"], total["identifiers_missed_extraction"]
+    found = [
+        f"{total['findings']:,} findings, of which {total['false_positives']} were not personal data.",
+        (f"{total['identifiers'] - missed} of {total['identifiers']} labelled identifiers found; "
+         f"{at_reading} of the {missed} misses happened while reading the scanned page (OCR "
+         "spacing, text wrapped across table cells, a value printed under a barcode), not in "
+         "detection."),
+        f"{total['names_covered']} of {total['names']} occurrences of labelled full names covered.",
+    ]
+    method = [
+        ("Identifiers (emails, phones, IDs...) were listed by hand per page; one counts as found "
+         "only if a finding covers it on that page."),
+        "A name or address finding counts as correct only if it contains a hand-checked name word.",
+        "The labels are used only to score; detection never reads them.",
+        f"Regenerate with: python -m analytics.accuracy (ground truth: {report.get('ground_truth', '')}).",
+    ]
+    limits = [
+        ("These are the same three documents the team used while building the system, so expect "
+         "lower scores on documents it has never seen."),
+        "All names and identifiers in the case-study files are synthetic.",
+        "Recall can only count what was labelled: a value nobody labelled cannot show up as a miss.",
+    ]
+    return (
+        '<div class="acc-notes">'
+        + note_list("What the numbers say", found, "info")
+        + note_list("How it was measured", method, "info")
+        + note_list("Limits of this test", limits, "warn")
+        + "</div>"
+    )

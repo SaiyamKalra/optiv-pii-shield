@@ -1,5 +1,3 @@
-# tests/test_office_extraction.py
-
 import io
 import sys
 from pathlib import Path
@@ -78,13 +76,11 @@ def sample_pptx(tmp_path) -> Path:
         io.BytesIO(_text_png("x", size=(40, 40))), PptxInches(8), PptxInches(0.2), width=Pt(20)
     )
 
-    prs.slides.add_slide(blank)  # empty slide
+    prs.slides.add_slide(blank)
     path = tmp_path / "sample.pptx"
     prs.save(path)
     return path
 
-
-# --- shared behaviour ----------------------------------------------------------------
 
 @pytest.mark.parametrize("fixture", ["sample_docx", "sample_pptx"])
 def test_metadata_identical_and_pages_in_order(fixture, request):
@@ -116,15 +112,13 @@ def test_load_image_flattens_transparency_onto_white():
     assert img.getpixel((0, 0)) == (255, 255, 255)
 
 
-# --- DOCX ---------------------------------------------------------------------------
-
 def test_docx_text_tables_and_header(sample_docx):
     chunks = extract_docx(sample_docx, ocr_engine=NO_OCR)
     page1 = chunks[0].raw_text
 
     assert "Confidential header" in page1
     assert "jane@example.com" in page1
-    assert "Rafael Duarte | EMP-40944" in page1  # a table row stays on one line
+    assert "Rafael Duarte | EMP-40944" in page1
 
 
 def test_docx_splits_on_page_break(sample_docx):
@@ -139,7 +133,7 @@ def test_docx_images_reported_when_ocr_unavailable(sample_docx):
     page2 = extract_docx(sample_docx, ocr_engine=NO_OCR)[1]
 
     assert page2.ocr_used is False
-    assert page2.images_skipped_count == 2  # the text image (no OCR) + the tiny icon
+    assert page2.images_skipped_count == 2
 
 
 @requires_tesseract
@@ -148,7 +142,7 @@ def test_docx_image_text_is_ocrd_with_image_coordinates(sample_docx):
 
     assert page2.extraction_method == "hybrid"
     assert page2.images_ocr_count == 1
-    assert page2.images_skipped_count == 1  # tiny icon
+    assert page2.images_skipped_count == 1
     assert "r.duarte@example.com" in page2.raw_text
     ocr_boxes = [b for b in page2.bounding_boxes if b.source == "ocr"]
     assert ocr_boxes
@@ -158,15 +152,13 @@ def test_docx_image_text_is_ocrd_with_image_coordinates(sample_docx):
         assert page2.raw_text[b.char_start:b.char_end] == b.text
 
 
-# --- PPTX ---------------------------------------------------------------------------
-
 def test_pptx_text_table_and_notes(sample_pptx):
     slide1 = extract_pptx(sample_pptx, ocr_engine=NO_OCR)[0]
 
     assert "Marguerite Vossberg" in slide1.raw_text
     assert "Mobile | +1 (555) 0114" in slide1.raw_text
     assert "m.vossberg@cadencefg.example" in slide1.raw_text
-    assert "Tobias Lindqvist" in slide1.raw_text  # speaker notes
+    assert "Tobias Lindqvist" in slide1.raw_text
     assert slide1.extraction_method == "native"
 
 
@@ -180,11 +172,11 @@ def test_pptx_one_chunk_per_slide_including_empty(sample_pptx):
 @requires_tesseract
 def test_pptx_picture_ocr_in_slide_points(sample_pptx):
     slide2 = extract_pptx(sample_pptx)[1]
-    picture = (72, 72, 72 + 6 * 72)  # left, top, right in points (1 inch = 72 pt)
+    picture = (72, 72, 72 + 6 * 72)
 
     assert slide2.extraction_method == "ocr"
     assert slide2.images_ocr_count == 1
-    assert slide2.images_skipped_count == 1  # tiny icon
+    assert slide2.images_skipped_count == 1
     assert "TK4820913" in slide2.raw_text
     for b in slide2.bounding_boxes:
         assert b.coord_space == "page_pt"

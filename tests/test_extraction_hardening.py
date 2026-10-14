@@ -1,7 +1,3 @@
-# tests/test_extraction_hardening.py
-"""Validation, rotated pages, hidden content, unread regions, decorative images and
-OCR failures, across PDF, DOCX and PPTX."""
-
 import io
 import shutil
 import sys
@@ -40,7 +36,6 @@ def _text_png(text: str, size=(900, 140)) -> bytes:
 
 
 def _barcode_png(size=(900, 300)) -> bytes:
-    """Text line plus barcode-like bars over a second line: the bars are unreadable ink."""
     img = Image.new("RGB", size, "white")
     draw = ImageDraw.Draw(img)
     draw.text((20, 20), "Badge holder details", fill="black", font=ImageFont.load_default(size=40))
@@ -62,8 +57,6 @@ def _pdf_with_image(tmp_path, png: bytes, name="img.pdf", rotation=0) -> Path:
     doc.close()
     return path
 
-
-# --- 5. validation ---------------------------------------------------------------------
 
 def _simple_pdf(path: Path, **save_kwargs) -> Path:
     doc = pymupdf.open()
@@ -129,8 +122,6 @@ def test_type_detected_by_content_not_extension(tmp_path):
     assert "jane@example.com" in chunks[0].raw_text
 
 
-# --- rotated PDF pages -------------------------------------------------------------
-
 @requires_tesseract
 @pytest.mark.parametrize("rotation", [90, 180, 270])
 def test_rotated_page_images_are_ocrd_in_unrotated_coordinates(tmp_path, rotation):
@@ -142,8 +133,6 @@ def test_rotated_page_images_are_ocrd_in_unrotated_coordinates(tmp_path, rotatio
     for box in page.bounding_boxes:
         assert image_rect.contains(pymupdf.Rect(box.x, box.y, box.x + box.w, box.y + box.h))
 
-
-# --- 1. hidden content -------------------------------------------------------------
 
 def test_pdf_hidden_content(tmp_path):
     doc = pymupdf.open()
@@ -175,8 +164,6 @@ def test_pdf_hidden_content(tmp_path):
     assert ("link", "mailto:r.duarte@example.com") in kinds
     assert ("bookmark", "Contacts for Naomi Osadebe") in kinds
     assert any(h.kind == "embedded_file" and "roster.csv" in h.text for h in page1.hidden_content)
-    # Hidden content stays out of raw_text, so raw_text offsets still map to visible words.
-    # (A form field's value is drawn on the page, so it may appear in both.)
     assert "Reviewer note" not in page1.raw_text
 
 
@@ -186,7 +173,6 @@ def test_docx_hidden_content(tmp_path):
     doc.core_properties.comments = "Draft prepared for Hiroshi Yamagata"
     paragraph = doc.add_paragraph("Escalate to the CRO.")
     doc.add_comment(paragraph.runs, text="Use her mobile +1 917 555 0146", author="Sofia Lang")
-    # A tracked deletion: removed text still sits in the file.
     deleted = paragraph._p.makeelement(
         "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}del", {}
     )
@@ -230,10 +216,8 @@ def test_pptx_hidden_content(tmp_path):
     assert ("metadata", "Adaeze Okonkwo-Bell") in kinds1
     assert ("alt_text", "Headshot of Solveig Aarnio") in kinds1
     assert any(h.kind == "hidden_slide" for h in slides[1].hidden_content)
-    assert "Draft" in slides[1].raw_text  # hidden slides are still extracted
+    assert "Draft" in slides[1].raw_text
 
-
-# --- 3. unread regions -------------------------------------------------------------
 
 @requires_tesseract
 def test_unreadable_ink_is_reported_as_unread_region(tmp_path):
@@ -251,7 +235,7 @@ def test_unreadable_ink_is_reported_as_unread_region(tmp_path):
     assert page1.unread_regions, "the bars should be reported as unread"
     for region in page1.unread_regions:
         assert image_rect.contains(pymupdf.Rect(region.x, region.y, region.x + region.w, region.y + region.h))
-        assert region.y > 200 + 150 * 0.4  # the bars, not the text line above them
+        assert region.y > 200 + 150 * 0.4
 
 
 @requires_tesseract
@@ -259,8 +243,6 @@ def test_clean_text_image_has_no_unread_regions(tmp_path):
     path = _pdf_with_image(tmp_path, _text_png("Passport TK4820913"))
     assert extract_pdf(path)[0].unread_regions == []
 
-
-# --- 4. false alarms ---------------------------------------------------------------
 
 def test_punctuation_does_not_count_as_low_confidence():
     builder = PageTextBuilder(1, low_conf_threshold=60)
@@ -271,7 +253,7 @@ def test_punctuation_does_not_count_as_low_confidence():
 
     assert data["low_confidence_word_count"] == 0
     assert data["ocr_mean_confidence"] == 95
-    assert "|" in data["raw_text"]  # still kept in the text
+    assert "|" in data["raw_text"]
 
 
 def test_decorative_images_are_not_ocrd(tmp_path, monkeypatch):
@@ -290,8 +272,6 @@ def test_decorative_images_are_not_ocrd(tmp_path, monkeypatch):
     assert slide1.images_skipped_count == 0
     assert "ACME" not in slide1.raw_text
 
-
-# --- 5. OCR failures are reported, not hidden --------------------------------------
 
 @requires_tesseract
 def test_ocr_failure_is_reported_with_unread_region(tmp_path, monkeypatch):

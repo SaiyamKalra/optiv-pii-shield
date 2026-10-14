@@ -1,9 +1,3 @@
-# extraction/validation.py
-"""Check that a file really is a readable PDF, DOCX or PPTX before extracting it.
-
-The type is decided by the file's content, never by its extension alone.
-"""
-
 import logging
 import zipfile
 from pathlib import Path
@@ -13,13 +7,11 @@ import pymupdf
 logger = logging.getLogger("Validation")
 
 MAX_FILE_BYTES = 200 * 1024 * 1024
-# A zip that inflates beyond this is treated as a zip bomb.
 MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200
 
 PDF_MAGIC = b"%PDF-"
 ZIP_MAGIC = b"PK\x03\x04"
-# Password-protected Office files (and legacy .doc/.ppt) are OLE compound files, not zips.
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 OOXML_MAIN_PARTS = {
@@ -29,15 +21,12 @@ OOXML_MAIN_PARTS = {
 
 
 class DocumentValidationError(ValueError):
-    """The file can't be extracted. `reason` is a short machine-readable code."""
-
     def __init__(self, reason: str, message: str):
         super().__init__(message)
         self.reason = reason
 
 
 def detect_type(path: Path) -> str:
-    """Return 'pdf', 'docx' or 'pptx' from the file's content."""
     with open(path, "rb") as f:
         head = f.read(1024)
 
@@ -96,11 +85,6 @@ def _check_pdf(path: Path):
 
 
 def validate_document(path: str | Path, max_bytes: int = MAX_FILE_BYTES) -> str:
-    """Validate a file and return its detected type: 'pdf', 'docx' or 'pptx'.
-
-    Raises DocumentValidationError with a reason of: not_found, empty, too_large,
-    unsupported_type, encrypted, encrypted_or_legacy, corrupt or no_pages.
-    """
     path = Path(path)
     if not path.is_file():
         raise DocumentValidationError("not_found", f"{path} does not exist")

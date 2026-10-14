@@ -1,6 +1,3 @@
-# tests/test_pdf_hidden_content.py
-"""The redacted PDF must not carry PII in places the page boxes don't cover."""
-
 import sys
 from pathlib import Path
 
@@ -42,5 +39,5 @@ def test_redacted_pdf_has_no_metadata_comments_links_bookmarks_or_attachments(tm
         assert doc.embfile_count() == 0
         assert sum(len(list(p.annots() or [])) for p in doc) == 0
         assert sum(len(p.get_links()) for p in doc) == 0
-        assert "Quarterly report" in doc[0].get_text()  # page content untouched
+        assert "Quarterly report" in doc[0].get_text()
     assert SECRET.encode() not in out.read_bytes()

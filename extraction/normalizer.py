@@ -1,6 +1,3 @@
-# extraction/normalizer.py
-"""Shared pieces every extractor uses to produce ExtractionInput chunks."""
-
 import hashlib
 import io
 import json
@@ -21,7 +18,6 @@ from ocr.ocr_engine import OCR_WORKERS, OcrEngine, OcrResult, OcrWord, is_meanin
 
 logger = logging.getLogger("Normalizer")
 
-# Images displayed smaller than this on either side (points) are logos/icons and are not OCR'd.
 MIN_IMAGE_SIDE_PT = 40.0
 EMU_PER_POINT = 12700
 DECORATIVE_IMAGES_FILE = Path(__file__).with_name("decorative_images.json")
@@ -38,7 +34,6 @@ def image_hash(blob: bytes) -> str:
 
 @cache
 def decorative_hashes() -> frozenset[str]:
-    """SHA-256 hashes of images known to be decorative (logos). See decorative_images.json."""
     if not DECORATIVE_IMAGES_FILE.is_file():
         return frozenset()
     data = json.loads(DECORATIVE_IMAGES_FILE.read_text(encoding="utf-8"))
@@ -46,7 +41,6 @@ def decorative_hashes() -> frozenset[str]:
 
 
 def save_chunks(chunks: list[ExtractionInput], path: str | Path) -> Path:
-    """Write extracted pages to JSON so later stages can load them without re-running OCR."""
     path = Path(path)
     data = [c.model_dump(mode="json") for c in chunks]
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -54,10 +48,6 @@ def save_chunks(chunks: list[ExtractionInput], path: str | Path) -> Path:
 
 
 def load_image(blob: bytes) -> Image.Image | None:
-    """Open an embedded image for OCR, flattening transparency onto white.
-
-    Returns None for formats Pillow cannot render (e.g. SVG, or EMF/WMF off Windows).
-    """
     try:
         img = Image.open(io.BytesIO(blob))
         img.load()
@@ -74,8 +64,6 @@ def load_image(blob: bytes) -> Image.Image | None:
 
 
 class PageTextBuilder:
-    """Builds one page's raw_text and word boxes together so char offsets always line up."""
-
     def __init__(self, page_number: int, low_conf_threshold: float = 0.0):
         self.page_number = page_number
         self.low_conf_threshold = low_conf_threshold
@@ -105,7 +93,6 @@ class PageTextBuilder:
         return start
 
     def add_text(self, text: str):
-        """Add native text that has no reliable coordinates (DOCX/PPTX text)."""
         for word in text.split():
             self._start_word(word)
             self.has_native = True
@@ -140,8 +127,6 @@ class PageTextBuilder:
     ):
         start = self._start_word(text)
         if source == "ocr" and confidence is not None:
-            # Rules, bullets and stray single characters can't hold PII; don't let
-            # them drag the page into "low confidence".
             if sum(ch.isalnum() for ch in text) >= 2:
                 self.ocr_confidences.append(confidence)
         else:
@@ -172,10 +157,6 @@ class PageTextBuilder:
         coord_space: str = "page_pt",
         image_ref: str | None = None,
     ):
-        """Append OCR words in Tesseract block/paragraph/line order.
-
-        `place` maps a word (image pixels) to (x, y, w, h) in the target coord space.
-        """
         current_block = None
         current_line = None
         for word in sorted(words, key=lambda w: (w.block, w.par, w.line, w.left)):
@@ -212,7 +193,6 @@ class PageTextBuilder:
         return "".join(self.parts).rstrip("\n")
 
     def page_data(self) -> dict:
-        """Fields for ExtractionInput, including OCR quality details."""
         has_ocr = bool(self.ocr_confidences)
         if has_ocr and self.has_native:
             method = "hybrid"
@@ -240,22 +220,19 @@ class PageTextBuilder:
 
 @dataclass
 class ImageOcrOutcome:
-    status: str  # "ok", "decorative", "unreadable", "no_ocr" or "error"
+    status: str
     result: OcrResult | None = None
     size: tuple[int, int] | None = None
     error: str | None = None
 
 
 class ImageOcrCache:
-    """OCRs each embedded image once, even if it is placed several times."""
-
     def __init__(self, ocr_engine: OcrEngine):
         self.ocr_engine = ocr_engine
         self.available = ocr_engine.is_available()
         self._cache: dict[str, ImageOcrOutcome] = {}
 
     def prefetch(self, items: list[tuple[str, bytes, float | None]], workers: int = OCR_WORKERS):
-        """OCR many images in parallel ahead of use. items: (ref, blob, display_width_pt)."""
         todo = {ref: (blob, width) for ref, blob, width in items if ref not in self._cache}
         if not todo or not self.available:
             return
@@ -265,8 +242,6 @@ class ImageOcrCache:
             self._cache[ref] = future.result()
 
     def ocr(self, ref: str, blob: bytes, display_width_pt: float | None = None) -> ImageOcrOutcome:
-        """OCR an embedded image once. display_width_pt (its width on the page) gives
-        the image's real resolution, used to tell rules apart from short marks."""
         if ref not in self._cache:
             self._cache[ref] = self._compute(blob, display_width_pt)
         return self._cache[ref]
@@ -286,7 +261,7 @@ class ImageOcrCache:
                     outcome = ImageOcrOutcome(
                         "ok", self.ocr_engine.ocr_image_detailed(img, px_per_inch=ppi), img.size
                     )
-                except RuntimeError as exc:  # Tesseract timeout or failure
+                except RuntimeError as exc:
                     outcome = ImageOcrOutcome("error", error=str(exc))
         return outcome
 
@@ -301,12 +276,6 @@ def record_image_outcome(
     coord_space: str,
     whole_image: tuple[float, float, float, float] | None = None,
 ):
-    """Add an image's OCR outcome to a page: words, unread regions, counts and errors.
-
-    place maps an OcrWord to (x, y, w, h); place_box maps a pixel box (x0, y0, x1, y1)
-    to (x, y, w, h). whole_image is the image's (x, y, w, h) in coord_space, used
-    to report an image that could not be read at all.
-    """
     if outcome.status == "decorative":
         builder.images_decorative += 1
         return
@@ -327,8 +296,6 @@ def record_image_outcome(
                            image_box=(x0, y0, x1 - x0, y1 - y0))
 
 
-# --- OOXML (DOCX/PPTX) package-level hidden content -------------------------------------
-
 _CORE_FIELDS = {
     "creator": "author", "lastModifiedBy": "last_modified_by", "title": "title",
     "subject": "subject", "keywords": "keywords", "description": "comments",
@@ -342,7 +309,6 @@ def _local(tag: str) -> str:
 
 
 def ooxml_hidden_content(path: Path) -> list[HiddenContent]:
-    """Document properties, custom properties, embedded objects and orphaned parts."""
     items: list[HiddenContent] = []
     with zipfile.ZipFile(path) as zf:
         names = zf.namelist()
@@ -391,7 +357,6 @@ def ooxml_hidden_content(path: Path) -> list[HiddenContent]:
 
 
 def _printable_strings(blob: bytes, min_length: int = 4) -> str:
-    """Readable text runs from a binary blob (UTF-8 and UTF-16)."""
     found = re.findall(rb"[\x20-\x7e]{%d,}" % min_length, blob)
     found += [m.decode("utf-16-le", "ignore").encode() for m in re.findall(
         rb"(?:[\x20-\x7e]\x00){%d,}" % min_length, blob)]
@@ -399,7 +364,6 @@ def _printable_strings(blob: bytes, min_length: int = 4) -> str:
 
 
 def drawing_part_text(blob: bytes) -> str:
-    """Visible text from a chart or SmartArt part: labels (a:t) and category/series names."""
     try:
         root = ElementTree.fromstring(blob)
     except ElementTree.ParseError:
@@ -415,10 +379,6 @@ def drawing_part_text(blob: bytes) -> str:
 
 
 def extract_document(path: str | Path, **kwargs) -> list[ExtractionInput]:
-    """Validate a file and extract it into one ExtractionInput per page/slide.
-
-    The format is detected from the file's content, not its extension.
-    """
     from extraction.validation import validate_document
 
     kind = validate_document(path)

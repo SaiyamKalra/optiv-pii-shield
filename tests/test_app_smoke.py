@@ -1,5 +1,3 @@
-"""Render the case-file screens with a prepared result (no OCR or upload needed)."""
-
 from pathlib import Path
 
 import pandas as pd
@@ -52,7 +50,7 @@ def _result(status: str) -> dict:
         "inspection_warnings": [], "extracted_chunks": [chunk], "pii_outputs": [output],
         "total_words": 4, "reliable_words": coverage["reliable"],
         "coverage_total": coverage["total"], "coverage": coverage,
-        "markdown": "---\ntitle: case.pdf\n---\n",  # skip loading the optimizer's model
+        "markdown": "---\ntitle: case.pdf\n---\n",
     }
 
 
@@ -60,6 +58,14 @@ def test_intake_screen_renders():
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     assert any(b.label == "Analyse document" for b in at.button)
+
+
+def test_accuracy_screen_renders():
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.session_state["screen"] = "accuracy"
+    at.run()
+    assert not at.exception
+    assert "How accurate is it?" in " ".join(m.value for m in at.markdown)
 
 
 @pytest.mark.parametrize("status", ["VERIFIED_NO_PII_FOUND", "BLOCKED"])
@@ -72,4 +78,4 @@ def test_case_file_renders_every_tab(status):
     assert [t.label for t in at.tabs] == ["Verdict", "Document", "Findings", "Analytics"]
     page_html = " ".join(m.value for m in at.markdown)
     assert ("Held for review" if status == "BLOCKED" else "Cleared") in page_html
-    assert "Helena" not in page_html  # findings are shown as tokens only
+    assert "Helena" not in page_html

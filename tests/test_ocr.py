@@ -1,5 +1,3 @@
-# tests/test_ocr.py
-
 import sys
 from pathlib import Path
 
@@ -30,7 +28,6 @@ def test_missing_binary_is_unavailable():
 def test_preprocess_inverts_dark_images():
     processed, _ = OcrEngine().preprocess(_text_image("x", fg="white", bg="black"))
 
-    # After inversion the background (most pixels) is light.
     assert processed.getpixel((0, 0)) > 200
 
 
@@ -65,8 +62,6 @@ def test_reads_light_text_on_dark_background():
     assert "900-42-7781" in [w.text for w in words]
 
 
-# --- worker count ----------------------------------------------------------------------
-
 @pytest.mark.parametrize(("cpus", "expected"), [(1, 1), (2, 2), (4, 3), (8, 6), (16, 12), (64, 16)])
 def test_default_workers_scale_with_the_machine(monkeypatch, cpus, expected):
     monkeypatch.delenv("OCR_WORKERS", raising=False)
@@ -83,12 +78,10 @@ def test_ocr_workers_env_override(monkeypatch):
     monkeypatch.setenv("OCR_WORKERS", "3")
     assert ocr_engine.default_ocr_workers() == 3
     monkeypatch.setenv("OCR_WORKERS", "lots")
-    assert ocr_engine.default_ocr_workers() == 12  # invalid value: falls back to the rule
+    assert ocr_engine.default_ocr_workers() == 12
     monkeypatch.setenv("OCR_WORKERS", "0")
     assert ocr_engine.default_ocr_workers() == 12
 
-
-# --- re-reading crops in parallel ---------------------------------------------------------
 
 def _lines_image(lines: list[str]) -> Image.Image:
     img = Image.new("RGB", (900, 70 * len(lines) + 20), "white")
@@ -106,7 +99,6 @@ def test_read_crops_keeps_order_and_maps_to_original_pixels():
 
     results = OcrEngine()._read_crops(img, boxes, 3.0, psm=7)
 
-    # Order is what matters here (exact digits depend on OCR of the test font).
     assert [results[i][0].text for i in range(len(lines))] == ["Passport", "SSN", "Staff"]
     for i, box in enumerate(boxes):
         for w in results[i]:
@@ -129,4 +121,4 @@ def test_failed_crop_is_left_out(monkeypatch):
                                  [(0, 0, 50, 20), (0, 30, 50, 50), (0, 60, 50, 80)], 2.0, psm=7)
 
     assert len(calls) == 3
-    assert len(results) == 2  # the failed crop is missing, so its caller keeps the old words
+    assert len(results) == 2

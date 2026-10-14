@@ -3,7 +3,6 @@ from redaction.office_xml_utils import pii_terms, redact_office_archive, value_p
 
 
 def _box_in_image(box):
-    """Pixel box inside the image, or None if the word has no image position."""
     if box.image_box is not None:
         return tuple(box.image_box)
     if box.coord_space == "image_px":
@@ -14,13 +13,6 @@ def _box_in_image(box):
 def image_boxes_to_redact(
     chunks: list[ExtractionInput], pii_results: list[PIIOutput]
 ) -> dict[str, list]:
-    """Image part -> pixel boxes to black out. None = the whole image.
-
-    - OCR words inside a finding;
-    - OCR words matching any detected value elsewhere (text is masked by value, so
-      images are too: the detector may flag only some occurrences);
-    - every unread region (ink OCR could not read may hold PII).
-    """
     by_page = {chunk.page_number: chunk for chunk in chunks}
     spans: dict[int, list[tuple[int, int]]] = {}
     for result in pii_results:
@@ -56,16 +48,13 @@ def image_boxes_to_redact(
             elif region.coord_space == "image_px" and (region.w or region.h):
                 pixel_box = (region.x, region.y, region.w, region.h)
             else:
-                pixel_box = None  # unreadable image: black out all of it
+                pixel_box = None
             targets.setdefault(region.image_ref, []).append(pixel_box)
 
     return targets
 
 
 class OfficeRedactor:
-    """Redacts a DOCX/PPTX package. Text is matched by value (Office text has no
-    fixed position); image text is blacked out by the OCR word boxes."""
-
     def redact(
         self,
         input_path: str,

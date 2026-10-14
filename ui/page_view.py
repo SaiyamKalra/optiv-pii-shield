@@ -1,10 +1,3 @@
-"""Render a PDF page with the pipeline's findings and uncertainty drawn on it.
-
-Word boxes are unrotated page points (PyMuPDF's system); a rendered page is rotated as
-displayed. As in extraction.pdf_extractor.render_overlays, boxes are mapped to image
-pixels with page.rotation_matrix scaled to the render resolution.
-"""
-
 import pymupdf
 from PIL import Image, ImageDraw
 
@@ -28,8 +21,8 @@ ENTITY_COLORS = {
     "IP_ADDRESS": "#5b6b73",
 }
 DEFAULT_COLOR = "#4a4a4a"
-UNCERTAIN_RGB = (183, 121, 31)  # amber: OCR word below the confidence threshold
-UNREAD_RGB = (201, 88, 12)  # orange: ink OCR could not read
+UNCERTAIN_RGB = (183, 121, 31)
+UNREAD_RGB = (201, 88, 12)
 
 
 def entity_color(entity_type: str | None) -> str:
@@ -42,8 +35,6 @@ def _rgb(hex_color: str) -> tuple[int, int, int]:
 
 
 def rasterize(pdf_bytes: bytes, page_number: int, dpi: int = 110):
-    """Render one page. Returns the image and the 6-value matrix that maps page points
-    (unrotated) to its pixels."""
     with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         page = doc[page_number - 1]
         pix = page.get_pixmap(dpi=dpi, alpha=False)
@@ -58,7 +49,6 @@ def _rect(box, matrix) -> tuple[float, float, float, float]:
 
 
 def is_uncertain_word(box, threshold: float = LOW_CONF_THRESHOLD) -> bool:
-    """An OCR word that counts towards low_confidence_word_count (2+ letters/digits)."""
     return (
         box.source == "ocr"
         and box.confidence is not None
@@ -98,9 +88,6 @@ def page_overlay(
     findings_layer: bool = True,
     uncertainty_layer: bool = True,
 ) -> Image.Image:
-    """Draw findings (outlined in their type's colour) and uncertainty (amber words,
-    hatched unread regions) on a rendered page. Finding boxes are chosen exactly as
-    the redactor chooses them, so the view matches what was blacked out."""
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
 

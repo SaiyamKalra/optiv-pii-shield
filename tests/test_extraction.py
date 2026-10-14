@@ -1,5 +1,3 @@
-# tests/test_extraction.py
-
 import sys
 from pathlib import Path
 
@@ -20,7 +18,6 @@ requires_tesseract = pytest.mark.skipif(
 
 
 def _text_image_png(lines: list[str]) -> bytes:
-    """Render lines of text to a PNG, so the text exists only as pixels."""
     src = pymupdf.open()
     page = src.new_page(width=420, height=40 + 30 * len(lines))
     for i, line in enumerate(lines):
@@ -34,16 +31,13 @@ def _text_image_png(lines: list[str]) -> bytes:
 def sample_pdf(tmp_path) -> Path:
     doc = pymupdf.open()
 
-    # Page 1: native text only
     page = doc.new_page()
     page.insert_text((72, 100), NATIVE_LINE, fontsize=12)
 
-    # Page 2: text that exists only inside an image, plus a tiny icon
     page = doc.new_page()
     page.insert_image(pymupdf.Rect(72, 100, 492, 220), stream=_text_image_png(IMAGE_LINES))
     page.insert_image(pymupdf.Rect(500, 20, 520, 40), stream=_text_image_png(["x"]))
 
-    # Page 3: blank
     doc.new_page()
 
     path = tmp_path / "sample.pdf"

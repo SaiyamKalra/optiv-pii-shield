@@ -1,14 +1,3 @@
-# tests/test_real_documents.py
-"""Regression check on the real case-study files: extraction must not get worse.
-
-Slow (about a minute) and needs the sample files, so it only runs when asked:
-
-    RUN_REAL_DOCS=1 pytest tests/test_real_documents.py -v
-
-The files are found in ../Case Study 2 Supporting Material, or CADENCE_DOCS_DIR.
-Thresholds are the measured results; raise them when extraction improves.
-"""
-
 import os
 import sys
 from pathlib import Path
@@ -47,7 +36,7 @@ def test_policy_pdf():
     assert r["row_integrity"] >= 0.875, r["rows_broken"]
     assert r["extraction_errors"] == 0
     assert r["hidden_content"].get("metadata", 0) >= 1
-    assert r["low_confidence_words"] <= 300  # baseline before hardening: 535
+    assert r["low_confidence_words"] <= 300
 
 
 def test_org_pack_pptx():
@@ -55,7 +44,7 @@ def test_org_pack_pptx():
     assert r["pages"] == 9
     assert r["identifier_recall"] == 1.0, r["identifiers_missed"]
     assert r["row_integrity"] == 1.0, r["rows_broken"]
-    assert r["images_decorative"] == 9  # the logo on every slide
+    assert r["images_decorative"] == 9
     assert r["pages_with_low_confidence"] == 0
     assert r["hidden_content"].get("metadata", 0) >= 1
 

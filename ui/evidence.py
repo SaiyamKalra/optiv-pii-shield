@@ -1,6 +1,3 @@
-"""Turn a pipeline result into the evidence trail shown on the Verdict tab:
-Extracted -> Detected -> Redacted -> Rescanned -> Verdict, each with real numbers."""
-
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -10,7 +7,6 @@ STATUS_LABEL = {
     "BLOCKED": "Held for review: a person should check the redacted copy before it is released.",
 }
 
-# The pipeline's internal reasons, in plain words for the people reading the report.
 FRIENDLY_REASONS = {
     "OCR contains low-confidence words": "Some scanned words were hard to read",
     "Rescan contains low-confidence OCR words":
@@ -30,7 +26,7 @@ FRIENDLY_REASONS = {
 @dataclass
 class Step:
     title: str
-    state: str  # "pass", "warn", "fail" or "skip"
+    state: str
     summary: str
     facts: list[str] = field(default_factory=list)
 
@@ -50,7 +46,6 @@ def _pages_text(pages) -> str:
 
 
 def summarize(items: list[dict]) -> list[str]:
-    """One plain sentence per kind of issue, with its total count and pages."""
     groups: dict[str, dict] = {}
     for item in items or []:
         reason = item.get("reason") or "Unknown issue"
@@ -82,7 +77,6 @@ def summarize(items: list[dict]) -> list[str]:
 
 
 def attention(res: dict) -> tuple[list[str], list[str]]:
-    """(problems that block release, warnings that need a human look)."""
     return summarize(res.get("inspection_issues")), summarize(res.get("inspection_warnings"))
 
 
@@ -94,7 +88,6 @@ def build_trail(res: dict) -> list[Step]:
     status = res.get("redaction_status")
     is_pdf = res.get("file_type", "pdf") == "pdf"
 
-    # 1. Extraction
     pages = res.get("pages") or len(chunks)
     ocr_pages = sum(1 for c in chunks if c.ocr_used or c.extraction_method in ("ocr", "hybrid"))
     images = sum(c.images_ocr_count for c in chunks)
@@ -122,7 +115,6 @@ def build_trail(res: dict) -> list[Step]:
         facts,
     )
 
-    # 2. Detection
     findings = [e for o in outputs for e in o.detected_entities]
     by_type = Counter(e.entity_type for e in findings)
     detected = Step(
@@ -133,7 +125,6 @@ def build_trail(res: dict) -> list[Step]:
         if findings else ["Nothing to redact was found."],
     )
 
-    # 3. Redaction
     unmapped = res.get("unmapped_findings") or []
     count = res.get("redaction_count", 0)
     if unmapped:
@@ -151,7 +142,6 @@ def build_trail(res: dict) -> list[Step]:
         )
         redacted = Step("Redacted", "pass", how, [f"{count} redaction(s) applied"])
 
-    # 4. Rescan of the saved output
     rescan_issues = [i for i in issues if _is_rescan(i)]
     rescan_warnings = [w for w in warnings if _is_rescan(w)]
     verified_scan = res.get("verification_passed")
@@ -178,7 +168,6 @@ def build_trail(res: dict) -> list[Step]:
             "The redacted file was read again from scratch and scanned: no PII found.",
         )
 
-    # 5. Verdict
     verdict_state = {"VERIFIED_NO_PII_FOUND": "pass", "REVIEW_REQUIRED": "warn"}.get(status, "fail")
     verdict = Step("Verdict", verdict_state, STATUS_LABEL.get(status, str(status)))
 

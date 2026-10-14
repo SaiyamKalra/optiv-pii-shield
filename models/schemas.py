@@ -1,15 +1,6 @@
 from pydantic import BaseModel, Field
 
-
 class BoundingBox(BaseModel):
-    """One word on a page/slide.
-
-    With coord_space="page_pt" (default), x, y, w, h are points with a top-left
-    origin on the page (PDF) or slide (PPTX). With coord_space="image_px", they
-    are pixels inside the embedded image named by image_ref (e.g. DOCX images,
-    which have no fixed page position).
-    """
-
     page: int
     text: str
     x: float
@@ -40,10 +31,6 @@ class BoundingBox(BaseModel):
 
 
 class HiddenContent(BaseModel):
-    """Text stored in the file but not shown on the page (kept out of raw_text so
-    raw_text offsets still map to visible word boxes). Downstream PII scanning
-    must check these too."""
-
     kind: str = Field(
         ..., description="e.g. metadata, comment, footnote, endnote, alt_text, "
                          "deleted_text, annotation, form_field, bookmark, embedded_file"
@@ -53,9 +40,6 @@ class HiddenContent(BaseModel):
 
 
 class UnreadRegion(BaseModel):
-    """An image area that holds marks OCR could not read (e.g. a barcode over text).
-    Treat as possibly containing PII: redact the whole region if unsure."""
-
     page: int
     x: float
     y: float
@@ -63,7 +47,7 @@ class UnreadRegion(BaseModel):
     h: float
     coord_space: str = "page_pt"
     image_ref: str | None = None
-    image_box: tuple[float, float, float, float] | None = None  # pixels in image_ref; None = whole image
+    image_box: tuple[float, float, float, float] | None = None
     reason: str = "unread_ink"
 
 
